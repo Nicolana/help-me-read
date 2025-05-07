@@ -1,7 +1,7 @@
 import { PDFMetadata, PDFAnnotation, PDFCache } from '../types/pdf'
 import { v4 as uuidv4 } from 'uuid'
-import { appDataDir, join, } from '@tauri-apps/api/path'
-import { appDataDir, join, } from '@tauri-apps/api'
+import { appDataDir, join } from '@tauri-apps/api/path'
+import { writeTextFile, exists, readTextFile, remove, mkdir  } from '@tauri-apps/plugin-fs'
 
 export class PDFService {
   private static instance: PDFService
@@ -37,11 +37,11 @@ export class PDFService {
     const pdfDir = await join(appDataPath, this.PDF_DIR)
     const thumbnailDir = await join(appDataPath, this.THUMBNAIL_DIR)
 
-    if (!(await fs.exists(pdfDir))) {
-      await fs.createDir(pdfDir, { recursive: true })
+    if (!(await exists(pdfDir))) {
+      await mkdir(pdfDir, { recursive: true })
     }
-    if (!(await fs.exists(thumbnailDir))) {
-      await fs.createDir(thumbnailDir, { recursive: true })
+    if (!(await exists(thumbnailDir))) {
+      await mkdir(thumbnailDir, { recursive: true })
     }
   }
 
@@ -50,8 +50,8 @@ export class PDFService {
       const appDataPath = await appDataDir()
       const cachePath = await join(appDataPath, this.CACHE_FILE)
       
-      if (await fs.exists(cachePath)) {
-        const content = await fs.readTextFile(cachePath)
+      if (await exists(cachePath)) {
+        const content = await readTextFile(cachePath)
         const parsed = JSON.parse(content)
         this.cache = new Map(Object.entries(parsed))
       }
@@ -65,7 +65,7 @@ export class PDFService {
       const appDataPath = await appDataDir()
       const cachePath = await join(appDataPath, this.CACHE_FILE)
       const obj = Object.fromEntries(this.cache)
-      await fs.writeTextFile(cachePath, JSON.stringify(obj, null, 2))
+      await writeTextFile(cachePath, JSON.stringify(obj, null, 2))
     } catch (error) {
       console.error('保存缓存失败:', error)
     }
@@ -78,7 +78,7 @@ export class PDFService {
     
     // 将文件保存到应用数据目录
     const arrayBuffer = await file.arrayBuffer()
-    await fs.writeTextFile(pdfPath, new Uint8Array(arrayBuffer))
+    await writeTextFile(pdfPath, new Uint8Array(arrayBuffer))
 
     const metadata: PDFMetadata = {
       id,
@@ -174,13 +174,13 @@ export class PDFService {
     const cache = this.cache.get(id)
     if (cache) {
       // 删除PDF文件
-      if (await fs.exists(cache.metadata.path)) {
-        await fs.remove(cache.metadata.path)
+      if (await exists(cache.metadata.path)) {
+        await remove(cache.metadata.path)
       }
       
       // 删除缩略图
-      if (cache.metadata.thumbnail && await fs.exists(cache.metadata.thumbnail)) {
-        await fs.remove(cache.metadata.thumbnail)
+      if (cache.metadata.thumbnail && await exists(cache.metadata.thumbnail)) {
+        await remove(cache.metadata.thumbnail)
       }
 
       this.cache.delete(id)
