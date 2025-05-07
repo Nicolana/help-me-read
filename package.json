@@ -10,11 +10,13 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@fortawesome/fontawesome-free": "^6.7.2",
     "@tailwindcss/vite": "^4.1.5",
     "@tauri-apps/api": "^2.5.0",
     "@tauri-apps/plugin-opener": "^2",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^5.2.133",
+    "sass": "^1.69.5",
     "tailwindcss": "^3.3.6",
     "vue": "^3.5.13",
     "vue-router": "4"
