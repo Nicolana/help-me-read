@@ -1,7 +1,7 @@
 import { PDFMetadata, PDFAnnotation, PDFCache } from '../types/pdf'
 import { v4 as uuidv4 } from 'uuid'
 import { appDataDir, join } from '@tauri-apps/api/path'
-import { writeTextFile, exists, readTextFile, remove, mkdir  } from '@tauri-apps/plugin-fs'
+import { writeTextFile, exists, readTextFile, writeFile, remove, mkdir  } from '@tauri-apps/plugin-fs'
 
 export class PDFService {
   private static instance: PDFService
@@ -9,9 +9,11 @@ export class PDFService {
   private readonly CACHE_FILE = 'pdf_cache.json'
   private readonly PDF_DIR = 'pdfs'
   private readonly THUMBNAIL_DIR = 'thumbnails'
+  private isInitialized = false
+  private initPromise: Promise<void> | null = null
 
   private constructor() {
-    this.init()
+    this.initPromise = this.init()
   }
 
   public static getInstance(): PDFService {
@@ -23,12 +25,22 @@ export class PDFService {
 
   private async init() {
     try {
+      console.log('开始初始化 PDFService...')
       // 确保必要的目录存在
       await this.ensureDirectories()
       // 加载缓存
       await this.loadCacheFromStorage()
+      this.isInitialized = true
+      console.log('PDFService 初始化完成，当前缓存大小:', this.cache.size)
     } catch (error) {
       console.error('初始化失败:', error)
+      throw error
+    }
+  }
+
+  private async ensureInitialized() {
+    if (!this.isInitialized) {
+      await this.initPromise
     }
   }
 
@@ -49,11 +61,15 @@ export class PDFService {
     try {
       const appDataPath = await appDataDir()
       const cachePath = await join(appDataPath, this.CACHE_FILE)
+      console.log('尝试加载缓存文件:', cachePath)
       
       if (await exists(cachePath)) {
         const content = await readTextFile(cachePath)
         const parsed = JSON.parse(content)
         this.cache = new Map(Object.entries(parsed))
+        console.log('成功加载缓存，包含文件数:', this.cache.size)
+      } else {
+        console.log('缓存文件不存在，将创建新的缓存')
       }
     } catch (error) {
       console.error('加载缓存失败:', error)
@@ -66,49 +82,64 @@ export class PDFService {
       const cachePath = await join(appDataPath, this.CACHE_FILE)
       const obj = Object.fromEntries(this.cache)
       await writeTextFile(cachePath, JSON.stringify(obj, null, 2))
+      console.log('缓存已保存，当前文件数:', this.cache.size)
     } catch (error) {
       console.error('保存缓存失败:', error)
     }
   }
 
   public async loadPDF(file: File): Promise<PDFMetadata> {
+    console.log('开始加载 PDF 文件:', file.name)
+    await this.ensureInitialized()
+    
     const id = uuidv4()
     const appDataPath = await appDataDir()
     const pdfPath = await join(appDataPath, this.PDF_DIR, `${id}.pdf`)
+    console.log('PDF 将保存到:', pdfPath)
     
-    // 将文件保存到应用数据目录
-    const arrayBuffer = await file.arrayBuffer()
-    await writeTextFile(pdfPath, new Uint8Array(arrayBuffer))
+    try {
+      // 将文件保存到应用数据目录
+      const arrayBuffer = await file.arrayBuffer()
+      await writeFile(pdfPath, new Uint8Array(arrayBuffer))
+      console.log('PDF 文件已保存到磁盘')
 
-    const metadata: PDFMetadata = {
-      id,
-      name: file.name,
-      path: pdfPath,
-      size: file.size,
-      lastModified: new Date(file.lastModified).toISOString(),
-      pageCount: 0, // 需要实际解析PDF获取
-      thumbnail: '' // 需要生成缩略图
+      const metadata: PDFMetadata = {
+        id,
+        name: file.name,
+        path: pdfPath,
+        size: file.size,
+        lastModified: new Date(file.lastModified).toISOString(),
+        pageCount: 0,
+        thumbnail: ''
+      }
+
+      // 创建缓存条目
+      const cache: PDFCache = {
+        metadata,
+        annotations: [],
+        lastAccessed: new Date().toISOString()
+      }
+
+      this.cache.set(id, cache)
+      await this.saveCacheToStorage()
+      console.log('PDF 元数据已添加到缓存')
+
+      return metadata
+    } catch (error) {
+      console.error('保存PDF文件失败:', error)
+      throw error
     }
-
-    // 创建缓存条目
-    const cache: PDFCache = {
-      metadata,
-      annotations: [],
-      lastAccessed: new Date().toISOString()
-    }
-
-    this.cache.set(id, cache)
-    await this.saveCacheToStorage()
-
-    return metadata
   }
 
   public getPDFMetadata(id: string): PDFMetadata | undefined {
     return this.cache.get(id)?.metadata
   }
 
-  public getAllPDFs(): PDFMetadata[] {
-    return Array.from(this.cache.values()).map(cache => cache.metadata)
+  public async getAllPDFs(): Promise<PDFMetadata[]> {
+    await this.ensureInitialized()
+    const pdfs = Array.from(this.cache.values()).map(cache => cache.metadata)
+    console.log('获取所有 PDF 文件，数量:', pdfs.length)
+    return pdfs
   }
 
   public async addAnnotation(pdfId: string, annotation: Omit<PDFAnnotation, 'id' | 'createdAt' | 'updatedAt'>): Promise<PDFAnnotation> {

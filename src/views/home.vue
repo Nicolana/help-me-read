@@ -73,8 +73,10 @@ onMounted(async () => {
 
 const loadPDFs = async () => {
   try {
+    console.log('开始加载 PDF 列表...')
     isLoading.value = true
-    pdfFiles.value = pdfService.getAllPDFs()
+    pdfFiles.value = await pdfService.getAllPDFs()
+    console.log('PDF 列表加载完成，文件数:', pdfFiles.value.length)
   } catch (error) {
     console.error('加载PDF列表失败:', error)
     // TODO: 添加错误提示
@@ -91,9 +93,12 @@ const handleFileUpload = async (event: Event) => {
   const input = event.target as HTMLInputElement
   if (input.files && input.files.length > 0) {
     const file = input.files[0]
+    console.log('开始处理文件上传:', file.name)
     try {
       isUploading.value = true
+      console.log('调用 PDFService.loadPDF...')
       await pdfService.loadPDF(file)
+      console.log('PDF 加载完成，重新加载列表...')
       await loadPDFs()
     } catch (error) {
       console.error('上传PDF失败:', error)
