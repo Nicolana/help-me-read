@@ -50,6 +50,16 @@
         </div>
       </div>
     </div>
+    
+    <ConfirmDialog
+      v-model="showConfirmDialog"
+      :title="confirmTitle"
+      :message="confirmMessage"
+      :confirm-text="confirmText"
+      :cancel-text="cancelText"
+      @confirm="handleConfirm"
+      @cancel="handleCancel"
+    />
   </div>
 </template>
 
@@ -59,6 +69,9 @@ import { useRouter } from 'vue-router'
 import { PDFService } from '../services/PDFService'
 import type { PDFMetadata } from '../types/pdf'
 import { sendNotification } from '@tauri-apps/plugin-notification'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
+import { useConfirm } from '../hooks/useConfirm'
+import { confirm } from '../services/ConfirmService'
 
 const router = useRouter()
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -67,6 +80,17 @@ const pdfService = PDFService.getInstance()
 const isLoading = ref(true)
 const isUploading = ref(false)
 const isDeleting = ref<string | null>(null)
+
+const {
+  showConfirmDialog,
+  confirmMessage,
+  confirmTitle,
+  confirmText,
+  cancelText,
+  show: showConfirm,
+  handleConfirm,
+  handleCancel
+} = useConfirm()
 
 onMounted(async () => {
   await loadPDFs()
@@ -136,12 +160,18 @@ const editPDF = (file: PDFMetadata) => {
 }
 
 const deletePDF = async (file: PDFMetadata) => {
-  if (confirm('确定要删除这个文件吗？')) {
+  const confirmed = await confirm({
+    title: '确认删除',
+    message: `确定要删除文件 "${file.name}" 吗？`,
+    confirmText: '删除',
+    cancelText: '取消'
+  })
+
+  if (confirmed) {
     try {
       isDeleting.value = file.id
       await pdfService.deletePDF(file.id)
       await loadPDFs()
-      // 使用现代化提示
       await sendNotification({
         title: '删除成功',
         body: `文件 "${file.name}" 已成功删除`,
@@ -149,7 +179,6 @@ const deletePDF = async (file: PDFMetadata) => {
       })
     } catch (error) {
       console.error('删除PDF失败:', error)
-      // 使用现代化错误提示
       await sendNotification({
         title: '删除失败',
         body: '删除文件时发生错误，请重试',
