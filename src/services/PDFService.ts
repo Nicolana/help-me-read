@@ -1,7 +1,10 @@
 import { PDFMetadata, PDFAnnotation, PDFCache } from '../types/pdf'
 import { v4 as uuidv4 } from 'uuid'
 import { appDataDir, join } from '@tauri-apps/api/path'
-import { writeTextFile, exists, readTextFile, writeFile, remove, mkdir  } from '@tauri-apps/plugin-fs'
+import { writeTextFile, exists, readTextFile, writeFile, remove, mkdir, readFile } from '@tauri-apps/plugin-fs'
+import * as pdfjsLib from 'pdfjs-dist'
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = '/public/pdf.worker.min.mjs'
 
 export class PDFService {
   private static instance: PDFService
@@ -88,6 +91,49 @@ export class PDFService {
     }
   }
 
+  private async generateCoverImage(pdfPath: string, id: string): Promise<string> {
+    try {
+      const appDataPath = await appDataDir()
+      const coverPath = await join(appDataPath, this.THUMBNAIL_DIR, `${id}_cover.png`)
+      
+      // 读取 PDF 文件
+      const pdfData = await readFile(pdfPath)
+      const pdf = await pdfjsLib.getDocument({ 
+        data: pdfData,
+      }).promise
+      
+      // 获取第一页
+      const page = await pdf.getPage(1)
+      
+      // 设置缩放比例
+      const viewport = page.getViewport({ scale: 1.5 })
+      
+      // 创建 canvas
+      const canvas = document.createElement('canvas')
+      const context = canvas.getContext('2d')
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+      
+      // 渲染 PDF 页面到 canvas
+      await page.render({
+        canvasContext: context!,
+        viewport: viewport
+      }).promise
+      
+      // 将 canvas 转换为图片数据
+      const imageData = canvas.toDataURL('image/png')
+      const base64Data = imageData.replace(/^data:image\/png;base64,/, '')
+      
+      // 保存图片文件
+      await writeFile(coverPath, Uint8Array.from(atob(base64Data), c => c.charCodeAt(0)))
+      
+      return coverPath
+    } catch (error) {
+      console.error('生成封面图片失败:', error)
+      return ''
+    }
+  }
+
   public async loadPDF(file: File): Promise<PDFMetadata> {
     console.log('开始加载 PDF 文件:', file.name)
     await this.ensureInitialized()
@@ -103,6 +149,10 @@ export class PDFService {
       await writeFile(pdfPath, new Uint8Array(arrayBuffer))
       console.log('PDF 文件已保存到磁盘')
 
+      // 生成封面图片
+      const coverUrl = await this.generateCoverImage(pdfPath, id)
+      console.log('封面图片已生成:', coverUrl)
+
       const metadata: PDFMetadata = {
         id,
         name: file.name,
@@ -110,7 +160,8 @@ export class PDFService {
         size: file.size,
         lastModified: new Date(file.lastModified).toISOString(),
         pageCount: 0,
-        thumbnail: ''
+        thumbnail: '',
+        coverUrl
       }
 
       // 创建缓存条目

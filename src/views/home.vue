@@ -30,7 +30,11 @@
     <div v-else class="file-grid">
       <div v-for="file in pdfFiles" :key="file.id" class="file-card">
         <div class="file-preview">
-          <img :src="file.coverUrl || '/default-pdf-cover.png'" alt="PDF封面" />
+          <img 
+            :src="file.coverUrl ? `file://${file.coverUrl}` : '/default-pdf-cover.svg'" 
+            alt="PDF封面"
+            @error="handleImageError"
+          />
         </div>
         <div class="file-info">
           <h3>{{ file.name }}</h3>
@@ -211,6 +215,11 @@ const handleMenuAction = async (action: string, file: PDFMetadata) => {
       break
   }
 }
+
+const handleImageError = (event: Event) => {
+  const img = event.target as HTMLImageElement
+  img.src = '/default-pdf-cover.svg'
+}
 </script>
 
 <style lang="scss">
@@ -299,11 +308,15 @@ const handleMenuAction = async (action: string, file: PDFMetadata) => {
         background: #ffffff;
         border-radius: 4px;
         overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         
         img {
           width: 100%;
           height: 100%;
-          object-fit: cover;
+          object-fit: contain;
+          background: #ffffff;
         }
       }
       

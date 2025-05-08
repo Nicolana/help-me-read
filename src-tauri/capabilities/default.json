@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "opener:default",
+    "notification:default",
     "fs:allow-appdata-write",
     "fs:allow-appdata-write-recursive",
     {
