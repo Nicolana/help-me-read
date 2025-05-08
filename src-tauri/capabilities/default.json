@@ -6,6 +6,15 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "fs:default"
+    {
+      "identifier": "fs:default",
+      "allow": [
+        {
+          "path": "$APPDATA/*",
+          "read": true,
+          "write": true
+        }
+      ]
+    }
   ]
 }
