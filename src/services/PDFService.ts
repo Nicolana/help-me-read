@@ -93,9 +93,6 @@ export class PDFService {
 
   private async generateCoverImage(pdfPath: string, id: string): Promise<string> {
     try {
-      const appDataPath = await appDataDir()
-      const coverPath = await join(appDataPath, this.THUMBNAIL_DIR, `${id}_cover.png`)
-      
       // 读取 PDF 文件
       const pdfData = await readFile(pdfPath)
       const pdf = await pdfjsLib.getDocument({ 
@@ -120,14 +117,8 @@ export class PDFService {
         viewport: viewport
       }).promise
       
-      // 将 canvas 转换为图片数据
-      const imageData = canvas.toDataURL('image/png')
-      const base64Data = imageData.replace(/^data:image\/png;base64,/, '')
-      
-      // 保存图片文件
-      await writeFile(coverPath, Uint8Array.from(atob(base64Data), c => c.charCodeAt(0)))
-      
-      return coverPath
+      // 直接返回 base64 格式的图片数据
+      return canvas.toDataURL('image/png')
     } catch (error) {
       console.error('生成封面图片失败:', error)
       return ''
@@ -149,9 +140,9 @@ export class PDFService {
       await writeFile(pdfPath, new Uint8Array(arrayBuffer))
       console.log('PDF 文件已保存到磁盘')
 
-      // 生成封面图片
+      // 生成封面图片（现在返回 base64 数据）
       const coverUrl = await this.generateCoverImage(pdfPath, id)
-      console.log('封面图片已生成:', coverUrl)
+      console.log('封面图片已生成')
 
       const metadata: PDFMetadata = {
         id,

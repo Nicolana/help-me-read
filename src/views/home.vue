@@ -31,9 +31,10 @@
       <div v-for="file in pdfFiles" :key="file.id" class="file-card">
         <div class="file-preview">
           <img 
-            :src="file.coverUrl ? `file://${file.coverUrl}` : '/default-pdf-cover.svg'" 
+            :src="file.coverUrl || '/default-pdf-cover.svg'" 
             alt="PDF封面"
             @error="handleImageError"
+            loading="lazy"
           />
         </div>
         <div class="file-info">
@@ -62,6 +63,7 @@ import { useRouter } from 'vue-router'
 import { PDFService } from '../services/PDFService'
 import type { PDFMetadata } from '../types/pdf'
 import { sendNotification } from '@tauri-apps/plugin-notification'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import FileMenu from '../components/FileMenu.vue'
 import { useConfirm } from '../hooks/useConfirm'
@@ -218,6 +220,7 @@ const handleMenuAction = async (action: string, file: PDFMetadata) => {
 
 const handleImageError = (event: Event) => {
   const img = event.target as HTMLImageElement
+  console.error('图片加载失败:', img.src)
   img.src = '/default-pdf-cover.svg'
 }
 </script>
