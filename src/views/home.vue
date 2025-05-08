@@ -39,9 +39,11 @@
         </div>
         <div class="file-info">
           <h3>{{ file.name }}</h3>
-          <p>{{ formatFileSize(file.size) }}</p>
+          <div class="file-meta">
+            <span>{{ formatFileSize(file.size) }}</span>
+            <FileMenu @action="handleMenuAction($event, file)" />
+          </div>
         </div>
-        <FileMenu @action="handleMenuAction($event, file)" />
       </div>
     </div>
     
@@ -63,7 +65,6 @@ import { useRouter } from 'vue-router'
 import { PDFService } from '../services/PDFService'
 import type { PDFMetadata } from '../types/pdf'
 import { sendNotification } from '@tauri-apps/plugin-notification'
-import { convertFileSrc } from '@tauri-apps/api/core'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import FileMenu from '../components/FileMenu.vue'
 import { useConfirm } from '../hooks/useConfirm'
@@ -83,7 +84,6 @@ const {
   confirmTitle,
   confirmText,
   cancelText,
-  show: showConfirm,
   handleConfirm,
   handleCancel
 } = useConfirm()
@@ -230,10 +230,12 @@ const handleImageError = (event: Event) => {
   padding: 2rem;
   background-color: #fbfbfb;
   min-height: 100vh;
+  width: 100%;
   
   .header {
     display: flex;
     margin-bottom: 2rem;
+    width: 100%;
     
     .upload-container {
       position: relative;
@@ -284,6 +286,7 @@ const handleImageError = (event: Event) => {
     min-height: 300px;
     color: #666;
     font-size: 1.2rem;
+    width: 100%;
     
     i {
       font-size: 3rem;
@@ -294,8 +297,9 @@ const handleImageError = (event: Event) => {
   
   .file-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(226px, 1fr));
-    gap: 1.5rem;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 1rem;
+    width: 100%;
     
     .file-card {
       background: #f7f7f7;
@@ -304,10 +308,13 @@ const handleImageError = (event: Event) => {
       display: flex;
       flex-direction: column;
       gap: 0.8rem;
+      position: relative;
+      width: 100%;
+      min-width: 0;
       
       .file-preview {
         width: 100%;
-        height: 172px;
+        aspect-ratio: 3/4;
         background: #ffffff;
         border-radius: 4px;
         overflow: hidden;
@@ -328,16 +335,26 @@ const handleImageError = (event: Event) => {
           margin: 0 0 0.3rem 0;
           font-size: 0.9rem;
           color: #353535;
-          white-space: nowrap;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
           overflow: hidden;
-          text-overflow: ellipsis;
+          line-height: 1.3;
         }
         
-        p {
-          margin: 0;
+        .file-meta {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
           color: #b8b8b8;
           font-size: 0.8rem;
         }
+      }
+      
+      :deep(.file-menu) {
+        position: absolute;
+        right: 1rem;
+        bottom: 1rem;
       }
     }
   }

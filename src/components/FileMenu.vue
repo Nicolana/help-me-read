@@ -41,14 +41,20 @@ const handleAction = (action: string) => {
 <style lang="scss" scoped>
 .file-menu {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
   
   .menu-trigger {
     background: none;
     border: none;
     color: #666;
     cursor: pointer;
-    padding: 0.5rem;
+    padding: 0.3rem;
     border-radius: 4px;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
     
     &:hover {
       background-color: #f5f5f5;
@@ -64,6 +70,7 @@ const handleAction = (action: string) => {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     z-index: 100;
     min-width: 120px;
+    margin-top: 0.3rem;
     
     .menu-item {
       display: flex;
