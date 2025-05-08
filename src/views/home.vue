@@ -9,11 +9,20 @@
           @change="handleFileUpload"
           style="display: none"
         />
-        <button class="upload-btn" @click="triggerFileInput" :disabled="isUploading">
-          <i class="fas fa-folder-open"></i>
-          <span>{{ isUploading ? '打开中...' : '打开文件' }}</span>
-          <i class="fas fa-chevron-right"></i>
-        </button>
+        <div 
+          class="upload-btn" 
+          @click="triggerFileInput" 
+          :class="{ 'is-uploading': isUploading }"
+        >
+          <div class="upload-content">
+            <i class="fas fa-folder-open"></i>
+            <div class="upload-text">
+              <span>{{ isUploading ? '打开中...' : '打开文件' }}</span>
+              <div class="upload-tip">支持拖拽文件到此处打开</div>
+            </div>
+            <i class="fas fa-chevron-right"></i>
+          </div>
+        </div>
       </div>
     </div>
     
@@ -244,36 +253,50 @@ const handleImageError = (event: Event) => {
     .upload-btn {
       background-color: #f7f7f7;
       color: #666666;
-      border: 1px solid #e0e0e0;
-      padding: 1.2rem 1.8rem;
+      border: 1px dashed #e0e0e0;
+      padding: 1.4rem 2rem;
       border-radius: 8px;
       cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-      font-size: 1.1rem;
-      min-width: 240px;
-      justify-content: flex-start;
+      min-width: 280px;
+      transition: all 0.3s ease;
       
-      &:hover:not(:disabled) {
-        background-color: #f0f0f0;
+      .upload-content {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
       }
       
-      &:disabled {
+      &:hover:not(.is-uploading) {
+        background-color: #f0f0f0;
+        border-color: #d0d0d0;
+      }
+      
+      &.is-uploading {
         background-color: #f7f7f7;
         cursor: not-allowed;
         opacity: 0.7;
       }
       
       i:first-child {
-        font-size: 1.2rem;
-        color: #4CAF50;
+        font-size: 1.4rem;
+        color: #1976D2;
       }
       
       i:last-child {
-        font-size: 1rem;
-        color: #4CAF50;
+        font-size: 1.2rem;
+        color: #1976D2;
         margin-left: auto;
+      }
+
+      .upload-text {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+      }
+
+      .upload-tip {
+        font-size: 0.9rem;
+        color: #999;
       }
     }
   }
