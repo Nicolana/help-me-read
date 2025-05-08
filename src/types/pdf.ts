@@ -6,6 +6,7 @@ export interface PDFMetadata {
   lastModified: string
   pageCount: number
   thumbnail?: string
+  coverUrl?: string
 }
 
 export interface PDFAnnotation {

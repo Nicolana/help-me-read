@@ -1,7 +1,6 @@
 <template>
   <div class="home">
     <div class="header">
-      <h1>我的PDF文件</h1>
       <div class="upload-container">
         <input
           type="file"
@@ -11,8 +10,9 @@
           style="display: none"
         />
         <button class="upload-btn" @click="triggerFileInput" :disabled="isUploading">
-          <i class="fas fa-upload"></i>
-          {{ isUploading ? '上传中...' : '上传文件' }}
+          <i class="fas fa-folder-open"></i>
+          <span>{{ isUploading ? '打开中...' : '打开文件' }}</span>
+          <i class="fas fa-chevron-right"></i>
         </button>
       </div>
     </div>
@@ -24,30 +24,19 @@
     
     <div v-else-if="pdfFiles.length === 0" class="empty-state">
       <i class="fas fa-file-pdf"></i>
-      <p>还没有PDF文件，点击上方按钮上传</p>
+      <p>还没有PDF文件，点击上方按钮打开</p>
     </div>
     
     <div v-else class="file-grid">
       <div v-for="file in pdfFiles" :key="file.id" class="file-card">
-        <div class="file-icon">
-          <i class="fas fa-file-pdf"></i>
+        <div class="file-preview">
+          <img :src="file.coverUrl || '/default-pdf-cover.png'" alt="PDF封面" />
         </div>
         <div class="file-info">
           <h3>{{ file.name }}</h3>
           <p>{{ formatFileSize(file.size) }}</p>
-          <p>{{ formatDate(file.lastModified) }}</p>
         </div>
-        <div class="file-actions">
-          <button class="action-btn" @click="openPDF(file)">
-            <i class="fas fa-eye"></i>
-          </button>
-          <button class="action-btn" @click="editPDF(file)">
-            <i class="fas fa-edit"></i>
-          </button>
-          <button class="action-btn" @click="deletePDF(file)" :disabled="isDeleting === file.id">
-            <i class="fas" :class="isDeleting === file.id ? 'fa-spinner fa-spin' : 'fa-trash'"></i>
-          </button>
-        </div>
+        <FileMenu @action="handleMenuAction($event, file)" />
       </div>
     </div>
     
@@ -70,6 +59,7 @@ import { PDFService } from '../services/PDFService'
 import type { PDFMetadata } from '../types/pdf'
 import { sendNotification } from '@tauri-apps/plugin-notification'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import FileMenu from '../components/FileMenu.vue'
 import { useConfirm } from '../hooks/useConfirm'
 import { confirm } from '../services/ConfirmService'
 
@@ -207,46 +197,69 @@ const formatDate = (dateString: string): string => {
     minute: '2-digit'
   })
 }
+
+const handleMenuAction = async (action: string, file: PDFMetadata) => {
+  switch (action) {
+    case 'view':
+      openPDF(file)
+      break
+    case 'edit':
+      editPDF(file)
+      break
+    case 'delete':
+      deletePDF(file)
+      break
+  }
+}
 </script>
 
 <style lang="scss">
 .home {
   padding: 2rem;
+  background-color: #fbfbfb;
+  min-height: 100vh;
   
   .header {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
     margin-bottom: 2rem;
-    
-    h1 {
-      font-size: 1.8rem;
-      color: #333;
-    }
     
     .upload-container {
       position: relative;
     }
     
     .upload-btn {
-      background-color: #4CAF50;
-      color: white;
-      border: none;
-      padding: 0.8rem 1.5rem;
-      border-radius: 4px;
+      background-color: #f7f7f7;
+      color: #666666;
+      border: 1px solid #e0e0e0;
+      padding: 1.2rem 1.8rem;
+      border-radius: 8px;
       cursor: pointer;
       display: flex;
       align-items: center;
-      gap: 0.5rem;
-      transition: all 0.3s;
+      gap: 1rem;
+      font-size: 1.1rem;
+      min-width: 240px;
+      justify-content: flex-start;
       
       &:hover:not(:disabled) {
-        background-color: #45a049;
+        background-color: #f0f0f0;
       }
       
       &:disabled {
-        background-color: #cccccc;
+        background-color: #f7f7f7;
         cursor: not-allowed;
+        opacity: 0.7;
+      }
+      
+      i:first-child {
+        font-size: 1.2rem;
+        color: #4CAF50;
+      }
+      
+      i:last-child {
+        font-size: 1rem;
+        color: #4CAF50;
+        margin-left: auto;
       }
     }
   }
@@ -269,66 +282,45 @@ const formatDate = (dateString: string): string => {
   
   .file-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(226px, 1fr));
     gap: 1.5rem;
     
     .file-card {
-      background: white;
+      background: #f7f7f7;
       border-radius: 8px;
-      padding: 1.5rem;
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-      transition: transform 0.2s;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
       
-      &:hover {
-        transform: translateY(-2px);
-      }
-      
-      .file-icon {
-        font-size: 2.5rem;
-        color: #e74c3c;
-        margin-bottom: 1rem;
+      .file-preview {
+        width: 100%;
+        height: 172px;
+        background: #ffffff;
+        border-radius: 4px;
+        overflow: hidden;
+        
+        img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
       }
       
       .file-info {
         h3 {
-          margin: 0 0 0.5rem 0;
-          font-size: 1.1rem;
-          color: #333;
+          margin: 0 0 0.3rem 0;
+          font-size: 0.9rem;
+          color: #353535;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
         }
         
         p {
-          margin: 0.2rem 0;
-          color: #666;
-          font-size: 0.9rem;
-        }
-      }
-      
-      .file-actions {
-        display: flex;
-        gap: 0.5rem;
-        margin-top: 1rem;
-        
-        .action-btn {
-          background: none;
-          border: none;
-          color: #666;
-          cursor: pointer;
-          padding: 0.5rem;
-          border-radius: 4px;
-          transition: all 0.2s;
-          
-          &:hover:not(:disabled) {
-            background-color: #f5f5f5;
-            color: #333;
-          }
-          
-          &:disabled {
-            cursor: not-allowed;
-            opacity: 0.7;
-          }
+          margin: 0;
+          color: #b8b8b8;
+          font-size: 0.8rem;
         }
       }
     }
