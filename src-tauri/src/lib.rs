@@ -1,5 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-use tauri_plugin_fs::init as init_fs;  // 添加这一行
+use tauri_plugin_fs::init as init_fs;
+use tauri_plugin_notification::init as init_notification;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -10,7 +11,8 @@ fn greet(name: &str) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(init_fs())  // 添加这一行
+        .plugin(init_fs())
+        .plugin(init_notification())
         .invoke_handler(tauri::generate_handler![greet])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

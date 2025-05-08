@@ -58,6 +58,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { PDFService } from '../services/PDFService'
 import type { PDFMetadata } from '../types/pdf'
+import { sendNotification } from '@tauri-apps/plugin-notification'
 
 const router = useRouter()
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -100,9 +101,20 @@ const handleFileUpload = async (event: Event) => {
       await pdfService.loadPDF(file)
       console.log('PDF 加载完成，重新加载列表...')
       await loadPDFs()
+      // 添加上传成功提示
+      await sendNotification({
+        title: '上传成功',
+        body: `文件 "${file.name}" 已成功上传`,
+        icon: '✅'
+      })
     } catch (error) {
       console.error('上传PDF失败:', error)
-      // TODO: 添加错误提示
+      // 添加上传失败提示
+      await sendNotification({
+        title: '上传失败',
+        body: '上传文件时发生错误，请重试',
+        icon: '❌'
+      })
     } finally {
       isUploading.value = false
       // 清空文件输入，允许重复上传同一文件
@@ -129,9 +141,20 @@ const deletePDF = async (file: PDFMetadata) => {
       isDeleting.value = file.id
       await pdfService.deletePDF(file.id)
       await loadPDFs()
+      // 使用现代化提示
+      await sendNotification({
+        title: '删除成功',
+        body: `文件 "${file.name}" 已成功删除`,
+        icon: '✅'
+      })
     } catch (error) {
       console.error('删除PDF失败:', error)
-      // TODO: 添加错误提示
+      // 使用现代化错误提示
+      await sendNotification({
+        title: '删除失败',
+        body: '删除文件时发生错误，请重试',
+        icon: '❌'
+      })
     } finally {
       isDeleting.value = null
     }
