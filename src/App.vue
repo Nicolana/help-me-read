@@ -11,7 +11,6 @@
 <style>
 .container {
   margin: 0;
-  padding: 20px;
   height: calc(100vh - 28px);
   box-sizing: border-box;
 }
