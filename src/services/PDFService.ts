@@ -290,19 +290,33 @@ export class PDFService {
     }
 
     const page = await pdf.getPage(pageNumber)
-    const viewport = page.getViewport({ scale })
+    const viewport = page.getViewport({ scale, rotation: 0 })
     
-    canvas.height = viewport.height
-    canvas.width = viewport.width
+    // 设置 canvas 的物理像素大小
+    const outputScale = window.devicePixelRatio || 1
+    canvas.width = Math.floor(viewport.width * outputScale)
+    canvas.height = Math.floor(viewport.height * outputScale)
     
-    const context = canvas.getContext('2d')
+    // 设置 canvas 的 CSS 大小
+    canvas.style.width = `${viewport.width}px`
+    canvas.style.height = `${viewport.height}px`
+    
+    const context = canvas.getContext('2d', { alpha: false })
     if (!context) {
       throw new Error('Failed to get canvas context')
     }
 
+    // 设置画布缩放以匹配设备像素比
+    context.scale(outputScale, outputScale)
+
     await page.render({
       canvasContext: context,
-      viewport: viewport
+      viewport: viewport,
+      intent: 'display',
+      renderInteractiveForms: true,
+      enableWebGL: true,
+      cMapUrl: 'https://unpkg.com/pdfjs-dist@3.11.174/cmaps/',
+      cMapPacked: true,
     }).promise
   }
 
