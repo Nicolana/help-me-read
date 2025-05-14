@@ -14,6 +14,13 @@
           <button @click="handleZoom(zoom + 0.1)">+</button>
         </div>
       </div>
+      <div class="toolbar-right">
+        <div class="page-control">
+          <button @click="handlePrevPage" :disabled="currentPage <= 1">上一页</button>
+          <span>{{ currentPage }} / {{ totalPages }}</span>
+          <button @click="handleNextPage" :disabled="currentPage >= totalPages">下一页</button>
+        </div>
+      </div>
     </div>
     <div class="pdf-content" ref="pdfContent">
       <div class="page-container">
@@ -37,6 +44,8 @@ export default defineComponent({
     const zoom = ref(1);
     const pdfService = PDFService.getInstance();
     const fileId = ref<string>('');
+    const currentPage = ref(1);
+    const totalPages = ref(0);
 
     onMounted(async () => {
       fileId.value = route.query.id as string;
@@ -47,6 +56,7 @@ export default defineComponent({
 
       try {
         await pdfService.openPDF(fileId.value);
+        totalPages.value = await pdfService.getPageCount(fileId.value);
         await renderPage();
       } catch (error) {
         console.error('加载PDF文件失败:', error);
@@ -63,7 +73,7 @@ export default defineComponent({
       if (!pageCanvas.value) return;
 
       try {
-        await pdfService.renderPage(fileId.value, 1, pageCanvas.value, zoom.value);
+        await pdfService.renderPage(fileId.value, currentPage.value, pageCanvas.value, zoom.value);
       } catch (error) {
         console.error('渲染页面失败:', error);
       }
@@ -72,6 +82,20 @@ export default defineComponent({
     const handleZoom = async (newZoom: number) => {
       if (newZoom >= 0.5 && newZoom <= 2) {
         zoom.value = newZoom;
+        await renderPage();
+      }
+    };
+
+    const handlePrevPage = async () => {
+      if (currentPage.value > 1) {
+        currentPage.value--;
+        await renderPage();
+      }
+    };
+
+    const handleNextPage = async () => {
+      if (currentPage.value < totalPages.value) {
+        currentPage.value++;
         await renderPage();
       }
     };
@@ -85,8 +109,12 @@ export default defineComponent({
 
     return {
       zoom,
+      currentPage,
+      totalPages,
       pageCanvas,
       handleZoom,
+      handlePrevPage,
+      handleNextPage,
       handleClose
     };
   }
@@ -117,7 +145,8 @@ export default defineComponent({
 }
 
 .toolbar-left,
-.toolbar-center {
+.toolbar-center,
+.toolbar-right {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -128,18 +157,26 @@ export default defineComponent({
   justify-content: center;
 }
 
-.zoom-control {
+.zoom-control,
+.page-control {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.zoom-control button {
+.zoom-control button,
+.page-control button {
   padding: 4px 8px;
   border: 1px solid #ccc;
   border-radius: 4px;
   background-color: white;
   cursor: pointer;
+}
+
+.zoom-control button:disabled,
+.page-control button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .close-btn {
@@ -164,6 +201,7 @@ export default defineComponent({
   background-color: white;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   padding: 10px;
+  height: fit-content;
 }
 
 .page-container canvas {
