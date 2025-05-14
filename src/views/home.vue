@@ -37,7 +37,12 @@
     </div>
     
     <div v-else class="file-grid">
-      <div v-for="file in pdfFiles" :key="file.id" class="file-card">
+      <div 
+        v-for="file in pdfFiles" 
+        :key="file.id" 
+        class="file-card"
+        @click="openPDF(file)"
+      >
         <div class="file-preview">
           <img 
             :src="file.coverUrl || '/default-pdf-cover.svg'" 
@@ -50,7 +55,7 @@
           <h3>{{ file.name }}</h3>
           <div class="file-meta">
             <span>{{ formatFileSize(file.size) }}</span>
-            <FileMenu @action="handleMenuAction($event, file)" />
+            <FileMenu @action="handleMenuAction($event, file)" @click.stop />
           </div>
         </div>
       </div>
@@ -127,7 +132,7 @@ const handleFileUpload = async (event: Event) => {
     try {
       isUploading.value = true
       console.log('调用 PDFService.loadPDF...')
-      await pdfService.loadPDF(file)
+      const uploadedFile = await pdfService.loadPDF(file)
       console.log('PDF 加载完成，重新加载列表...')
       await loadPDFs()
       // 添加上传成功提示
@@ -136,6 +141,10 @@ const handleFileUpload = async (event: Event) => {
         body: `文件 "${file.name}" 已成功上传`,
         icon: '✅'
       })
+      // 上传成功后自动跳转到阅读器
+      if (uploadedFile) {
+        openPDF(uploadedFile)
+      }
     } catch (error) {
       console.error('上传PDF失败:', error)
       // 添加上传失败提示
@@ -333,6 +342,18 @@ const handleImageError = (event: Event) => {
       position: relative;
       width: 100%;
       min-width: 0;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      
+      &:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        background: #ffffff;
+      }
+      
+      &:active {
+        transform: translateY(0);
+      }
       
       .file-preview {
         width: 100%;

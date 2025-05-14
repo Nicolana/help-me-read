@@ -14,6 +14,7 @@ export class PDFService {
   private readonly THUMBNAIL_DIR = 'thumbnails'
   private isInitialized = false
   private initPromise: Promise<void> | null = null
+  private activePDFs: Map<string, any> = new Map() // 存储当前打开的PDF文档
 
   private constructor() {
     this.initPromise = this.init()
@@ -259,5 +260,91 @@ export class PDFService {
       this.cache.delete(id)
       await this.saveCacheToStorage()
     }
+  }
+
+  public async openPDF(id: string): Promise<void> {
+    const metadata = this.getPDFMetadata(id)
+    if (!metadata) {
+      throw new Error('PDF not found')
+    }
+
+    if (!this.activePDFs.has(id)) {
+      const pdfData = await readFile(metadata.path)
+      const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise
+      this.activePDFs.set(id, pdf)
+      
+      // 更新元数据中的页数
+      const pageCount = pdf.numPages
+      const cache = this.cache.get(id)
+      if (cache) {
+        cache.metadata.pageCount = pageCount
+        await this.saveCacheToStorage()
+      }
+    }
+  }
+
+  public async renderPage(id: string, pageNumber: number, canvas: HTMLCanvasElement, scale: number = 1): Promise<void> {
+    const pdf = this.activePDFs.get(id)
+    if (!pdf) {
+      throw new Error('PDF not loaded')
+    }
+
+    const page = await pdf.getPage(pageNumber)
+    const viewport = page.getViewport({ scale })
+    
+    canvas.height = viewport.height
+    canvas.width = viewport.width
+    
+    const context = canvas.getContext('2d')
+    if (!context) {
+      throw new Error('Failed to get canvas context')
+    }
+
+    await page.render({
+      canvasContext: context,
+      viewport: viewport
+    }).promise
+  }
+
+  public async getPageCount(id: string): Promise<number> {
+    const pdf = this.activePDFs.get(id)
+    if (!pdf) {
+      throw new Error('PDF not loaded')
+    }
+    return pdf.numPages
+  }
+
+  public async closePDF(id: string): Promise<void> {
+    const pdf = this.activePDFs.get(id)
+    if (pdf) {
+      await pdf.destroy()
+      this.activePDFs.delete(id)
+    }
+  }
+
+  public async getThumbnail(id: string, pageNumber: number = 1): Promise<string> {
+    const pdf = this.activePDFs.get(id)
+    if (!pdf) {
+      throw new Error('PDF not loaded')
+    }
+
+    const page = await pdf.getPage(pageNumber)
+    const viewport = page.getViewport({ scale: 0.5 })
+    
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+    if (!context) {
+      throw new Error('Failed to get canvas context')
+    }
+
+    canvas.width = viewport.width
+    canvas.height = viewport.height
+
+    await page.render({
+      canvasContext: context,
+      viewport: viewport
+    }).promise
+
+    return canvas.toDataURL('image/png')
   }
 } 
