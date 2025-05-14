@@ -12,7 +12,7 @@
 .container {
   margin: 0;
   padding: 20px;
-  min-height: 100vh;
+  min-height: calc(100vh - 28px);
   box-sizing: border-box;
 }
 </style>

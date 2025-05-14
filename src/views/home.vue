@@ -238,7 +238,6 @@ const handleImageError = (event: Event) => {
 .home {
   padding: 2rem;
   background-color: #fbfbfb;
-  min-height: 100vh;
   width: 100%;
   
   .header {
