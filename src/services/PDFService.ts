@@ -320,7 +320,17 @@ export class PDFService {
     }).promise
   }
 
-  public async renderPages(id: string, startPage: number, endPage: number, container: HTMLElement, scale: number = 1): Promise<void> {
+  public async getPageViewport(id: string, pageNumber: number, scale: number = 1) {
+    const pdf = this.activePDFs.get(id)
+    if (!pdf) {
+      throw new Error('PDF not loaded')
+    }
+
+    const page = await pdf.getPage(pageNumber)
+    return page.getViewport({ scale, rotation: 0 })
+  }
+
+  public async renderPages(id: string, startPage: number, endPage: number, container: HTMLElement, scale: number = 1): Promise<{ pageHeights: number[] }> {
     const pdf = this.activePDFs.get(id)
     if (!pdf) {
       throw new Error('PDF not loaded')
@@ -337,11 +347,16 @@ export class PDFService {
       container.appendChild(pagesContainer)
     }
 
+    const pageHeights: number[] = []
+
     // 渲染每一页
     for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
       // 检查页面是否已经渲染
       const existingCanvas = pagesContainer.querySelector(`[data-page="${pageNum}"]`)
-      if (existingCanvas) continue
+      if (existingCanvas) {
+        pageHeights.push(existingCanvas.clientHeight)
+        continue
+      }
 
       const page = await pdf.getPage(pageNum)
       const viewport = page.getViewport({ scale, rotation: 0 })
@@ -376,7 +391,10 @@ export class PDFService {
       }).promise
 
       pagesContainer.appendChild(canvas)
+      pageHeights.push(canvas.clientHeight)
     }
+
+    return { pageHeights }
   }
 
   public async getPageCount(id: string): Promise<number> {
