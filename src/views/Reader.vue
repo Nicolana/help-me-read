@@ -27,34 +27,32 @@
       <div class="pdf-content" ref="pdfContent" @scroll="handleScroll">
         <div class="pages-container" ref="pagesContainer"></div>
       </div>
-      <div class="custom-scrollbar" ref="scrollbar">
-        <div class="scrollbar-track" @click="handleTrackClick">
-          <div 
-            class="scrollbar-thumb" 
-            :style="{ 
-              height: thumbHeight + 'px',
-              transform: `translateY(${thumbPosition}px)`
-            }"
-            @mousedown="startDragging"
-          ></div>
-        </div>
-      </div>
+      <CustomScrollbar
+        :container-ref="pdfContent"
+        :content-height="contentHeight"
+        :viewport-height="viewportHeight"
+        v-model:scrollTop="scrollTop"
+      />
     </div>
   </div>
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, onMounted, onUnmounted, computed } from 'vue';
+import { defineComponent, ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import { PDFService } from '../services/PDFService';
 import { useRoute, useRouter } from 'vue-router';
+import CustomScrollbar from '../components/CustomScrollbar.vue';
 
 export default defineComponent({
+  components: {
+    CustomScrollbar
+  },
+
   setup() {
     const route = useRoute();
     const router = useRouter();
     const pdfContent = ref<HTMLElement | null>(null);
     const pagesContainer = ref<HTMLElement | null>(null);
-    const scrollbar = ref<HTMLElement | null>(null);
     const zoom = ref(1);
     const pdfService = PDFService.getInstance();
     const fileId = ref<string>('');
@@ -62,63 +60,23 @@ export default defineComponent({
     const totalPages = ref(0);
     const visiblePages = ref(5);
     const isLoading = ref(false);
-    const isDragging = ref(false);
-    const startY = ref(0);
-    const startThumbPosition = ref(0);
+    const scrollTop = ref(0);
 
-    // 计算滚动条高度和位置
-    const thumbHeight = computed(() => {
-      if (!pdfContent.value || !pagesContainer.value) return 100;
-      const contentHeight = pdfContent.value.clientHeight;
-      const totalHeight = pagesContainer.value.scrollHeight;
-      return Math.max(50, (contentHeight / totalHeight) * contentHeight);
+    // 计算内容高度和视口高度
+    const contentHeight = computed(() => {
+      return pagesContainer.value?.scrollHeight || 0;
     });
 
-    const thumbPosition = computed(() => {
-      if (!pdfContent.value || !pagesContainer.value) return 0;
-      const { scrollTop, clientHeight, scrollHeight } = pdfContent.value;
-      const maxScroll = scrollHeight - clientHeight;
-      const maxThumbPosition = clientHeight - thumbHeight.value;
-      return (scrollTop / maxScroll) * maxThumbPosition;
+    const viewportHeight = computed(() => {
+      return pdfContent.value?.clientHeight || 0;
     });
 
-    // 滚动条拖动相关
-    const startDragging = (e: MouseEvent) => {
-      isDragging.value = true;
-      startY.value = e.clientY;
-      startThumbPosition.value = thumbPosition.value;
-      document.addEventListener('mousemove', handleDrag);
-      document.addEventListener('mouseup', stopDragging);
-    };
-
-    const handleDrag = (e: MouseEvent) => {
-      if (!isDragging.value || !pdfContent.value) return;
-      
-      const delta = e.clientY - startY.value;
-      const { clientHeight, scrollHeight } = pdfContent.value;
-      const maxScroll = scrollHeight - clientHeight;
-      const maxThumbPosition = clientHeight - thumbHeight.value;
-      const percentage = (startThumbPosition.value + delta) / maxThumbPosition;
-      
-      pdfContent.value.scrollTop = percentage * maxScroll;
-    };
-
-    const stopDragging = () => {
-      isDragging.value = false;
-      document.removeEventListener('mousemove', handleDrag);
-      document.removeEventListener('mouseup', stopDragging);
-    };
-
-    const handleTrackClick = (e: MouseEvent) => {
-      if (!pdfContent.value || !scrollbar.value) return;
-      
-      const { top, height } = scrollbar.value.getBoundingClientRect();
-      const clickPosition = e.clientY - top;
-      const percentage = clickPosition / height;
-      const { scrollHeight, clientHeight } = pdfContent.value;
-      
-      pdfContent.value.scrollTop = percentage * (scrollHeight - clientHeight);
-    };
+    // 监听滚动位置变化
+    watch(scrollTop, (newScrollTop) => {
+      if (pdfContent.value && pdfContent.value.scrollTop !== newScrollTop) {
+        pdfContent.value.scrollTop = newScrollTop;
+      }
+    });
 
     onMounted(async () => {
       fileId.value = route.query.id as string;
@@ -140,7 +98,6 @@ export default defineComponent({
       if (fileId.value) {
         await pdfService.closePDF(fileId.value);
       }
-      stopDragging();
     });
 
     const renderInitialPages = async () => {
@@ -149,16 +106,19 @@ export default defineComponent({
       await pdfService.renderPages(fileId.value, 1, endPage, pagesContainer.value, zoom.value);
     };
 
-    const handleScroll = async () => {
+    const handleScroll = async (e: Event) => {
       if (!pdfContent.value || isLoading.value) return;
 
-      const { scrollTop, scrollHeight, clientHeight } = pdfContent.value;
-      const scrollBottom = scrollTop + clientHeight;
+      // 更新滚动位置
+      scrollTop.value = pdfContent.value.scrollTop;
+
+      const { scrollTop: currentScrollTop, scrollHeight, clientHeight } = pdfContent.value;
+      const scrollBottom = currentScrollTop + clientHeight;
       const threshold = scrollHeight - clientHeight * 1.5;
 
       // 计算当前页面
       const pageHeight = clientHeight / visiblePages.value;
-      currentPage.value = Math.ceil(scrollTop / pageHeight) + 1;
+      currentPage.value = Math.ceil(currentScrollTop / pageHeight) + 1;
 
       if (scrollBottom > threshold) {
         isLoading.value = true;
@@ -196,14 +156,12 @@ export default defineComponent({
       totalPages,
       pdfContent,
       pagesContainer,
-      scrollbar,
-      thumbHeight,
-      thumbPosition,
+      contentHeight,
+      viewportHeight,
+      scrollTop,
       handleZoom,
       handleScroll,
-      handleClose,
-      handleTrackClick,
-      startDragging
+      handleClose
     };
   }
 });
@@ -255,40 +213,6 @@ export default defineComponent({
 .pages-container canvas {
   background-color: white;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-/* 自定义滚动条样式 */
-.custom-scrollbar {
-  width: 8px;
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  background-color: rgba(255, 255, 255, 0.1);
-}
-
-.scrollbar-track {
-  width: 100%;
-  height: 100%;
-  position: relative;
-  cursor: pointer;
-}
-
-.scrollbar-thumb {
-  width: 100%;
-  background-color: rgba(255, 255, 255, 0.3);
-  position: absolute;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.5);
-}
-
-.scrollbar-thumb:active {
-  background-color: rgba(255, 255, 255, 0.7);
 }
 
 /* 保留其他已有样式 */

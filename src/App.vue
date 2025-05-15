@@ -11,7 +11,7 @@
 <style>
 .container {
   margin: 0;
-  height: calc(100vh - 28px);
+  height: 100vh;
   box-sizing: border-box;
 }
 </style>

@@ -343,7 +343,7 @@ export class PDFService {
       pagesContainer.className = 'pdf-pages-container'
       pagesContainer.style.display = 'flex'
       pagesContainer.style.flexDirection = 'column'
-      pagesContainer.style.gap = '20px'
+      pagesContainer.style.gap = '4px'
       container.appendChild(pagesContainer)
     }
 
