@@ -178,15 +178,25 @@ export default defineComponent({
         currentPage.value = calculatedPage;
       }
 
-      if (scrollBottom > threshold) {
+      // 自动加载更多页面
+      if (scrollBottom > threshold && !isLoading.value) {
         isLoading.value = true;
-        const startPage = currentPage.value + 1;
-        const endPage = Math.min(startPage + visiblePages.value - 1, totalPages.value);
-        
-        if (startPage <= totalPages.value) {
-          await pdfService.renderPages(fileId.value, startPage, endPage, pagesContainer.value!, zoom.value);
+        try {
+          console.log('接近底部，加载更多页面');
+          // 确定下一批要加载的页面范围
+          const renderedPages = pagesContainer.value?.querySelectorAll('canvas').length || 0;
+          const startPage = renderedPages + 1;
+          const endPage = Math.min(startPage + visiblePages.value - 1, totalPages.value);
+          
+          if (startPage <= totalPages.value) {
+            console.log(`加载页面 ${startPage} 到 ${endPage}`);
+            await pdfService.renderPages(fileId.value, startPage, endPage, pagesContainer.value!, zoom.value);
+          }
+        } catch (error) {
+          console.error('加载更多页面失败:', error);
+        } finally {
+          isLoading.value = false;
         }
-        isLoading.value = false;
       }
     };
 
