@@ -9,15 +9,18 @@
       </div>
       <div class="toolbar-center">
         <div class="zoom-control">
-          <button @click="handleZoom(zoom - 0.1)">-</button>
+          <button @click="handleZoom(zoom - 0.1)"><i class="fas fa-minus"></i></button>
           <span>{{ Math.round(zoom * 100) }}%</span>
-          <button @click="handleZoom(zoom + 0.1)">+</button>
+          <button @click="handleZoom(zoom + 0.1)"><i class="fas fa-plus"></i></button>
         </div>
-      </div>
-      <div class="toolbar-right">
+        <div class="toolbar-divider"></div>
         <div class="page-control">
           <button @click="handlePrevPage" :disabled="currentPage <= 1">上一页</button>
-          <span>{{ currentPage }} / {{ totalPages }}</span>
+          <div class="page-control-span">
+            <span class="page-control-span-current">{{ currentPage }}</span>
+            <span class="page-control-span-divider"> / </span>
+            <span class="page-control-span-total">{{ totalPages }}</span>
+          </div>
           <button @click="handleNextPage" :disabled="currentPage >= totalPages">下一页</button>
         </div>
       </div>
@@ -126,6 +129,7 @@ export default defineComponent({
   display: flex;
   flex-direction: column;
   height: 100%;
+  background-color: #3a3a3a;
 }
 
 .pdf-content {
@@ -140,8 +144,6 @@ export default defineComponent({
   justify-content: space-between;
   align-items: center;
   padding: 10px;
-  background-color: #f5f5f5;
-  border-bottom: 1px solid #e0e0e0;
 }
 
 .toolbar-left,
@@ -157,6 +159,12 @@ export default defineComponent({
   justify-content: center;
 }
 
+.toolbar-divider {
+  width: 1px;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
 .zoom-control,
 .page-control {
   display: flex;
@@ -164,19 +172,73 @@ export default defineComponent({
   gap: 10px;
 }
 
-.zoom-control button,
 .page-control button {
-  padding: 4px 8px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background-color: white;
+  border: none;
+  background: transparent;
+  color: white;
   cursor: pointer;
+  font-size: 12px;
+  padding: 4px;
 }
 
-.zoom-control button:disabled,
-.page-control button:disabled {
+.page-control button:hover {
+  background: #353535;
+}
+
+.page-control .page-control-span {
+  color: white;
+  background: #4d4d4d;
+  font-size: 12px;
+  border-radius: 4px;
+  padding: 2px 8px;
+  position: relative;
+  display: block;
+  display: flex;
+  align-items: center;
+}
+
+.page-control .page-control-span-current {
+  margin: 0 4px;
+  width: 20px;
+  display: block;
+  text-align: center;
+}
+
+.zoom-control button {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: white;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px;
+}
+
+.zoom-control button:hover {
+  background: #353535;
+}
+
+.zoom-control button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  background-color: transparent;
+}
+
+.zoom-control span {
+  color: white;
+  margin: 0 12px;
+  min-width: 48px;
+  text-align: center;
+  font-size: 12px;
+  background: #4d4d4d;
+  border-radius: 2px;
+  font-weight: 500;
+  padding: 2px 4px;
 }
 
 .close-btn {
@@ -186,21 +248,18 @@ export default defineComponent({
   padding: 6px 12px;
   border: none;
   border-radius: 4px;
-  background-color: #f44336;
   color: white;
   cursor: pointer;
   font-size: 14px;
-  transition: background-color 0.2s;
+  background: transparent;
 }
 
 .close-btn:hover {
-  background-color: #d32f2f;
+  background-color: #353535;
 }
 
 .page-container {
   background-color: white;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  padding: 10px;
   height: fit-content;
 }
 
