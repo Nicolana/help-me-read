@@ -248,7 +248,7 @@ export default defineComponent({
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
+  gap: 4px;
   overflow: visible !important;
 }
 
