@@ -5,8 +5,8 @@ export interface PDFMetadata {
   size: number
   lastModified: string
   pageCount: number
-  thumbnail?: string
-  coverUrl?: string
+  thumbnail: string
+  coverUrl: string
 }
 
 export interface PDFAnnotation {
@@ -23,8 +23,16 @@ export interface PDFAnnotation {
   updatedAt: string
 }
 
+export interface PDFReadingProgress {
+  scrollTop: number
+  zoom: number
+  currentPage: number
+  lastUpdated: string
+}
+
 export interface PDFCache {
   metadata: PDFMetadata
   annotations: PDFAnnotation[]
   lastAccessed: string
+  readingProgress?: PDFReadingProgress
 } 

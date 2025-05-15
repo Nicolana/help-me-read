@@ -61,6 +61,7 @@ export default defineComponent({
     const visiblePages = ref(5);
     const isLoading = ref(false);
     const scrollTop = ref(0);
+    const saveProgressDebounceTimer = ref<number | null>(null);
 
     // 计算内容高度和视口高度
     const contentHeight = computed(() => {
@@ -72,10 +73,30 @@ export default defineComponent({
     });
 
     // 监听滚动位置变化
-    watch(scrollTop, (newScrollTop) => {
+    watch([scrollTop, zoom, currentPage], async ([newScrollTop, newZoom, newPage]) => {
       if (pdfContent.value && pdfContent.value.scrollTop !== newScrollTop) {
         pdfContent.value.scrollTop = newScrollTop;
       }
+      
+      // 使用防抖保存阅读进度
+      if (saveProgressDebounceTimer.value) {
+        clearTimeout(saveProgressDebounceTimer.value);
+      }
+      
+      saveProgressDebounceTimer.value = window.setTimeout(async () => {
+        if (fileId.value) {
+          try {
+            console.log('保存阅读进度:', { scrollTop: newScrollTop, zoom: newZoom, currentPage: newPage });
+            await pdfService.saveReadingProgress(fileId.value, {
+              scrollTop: newScrollTop,
+              zoom: newZoom,
+              currentPage: newPage
+            });
+          } catch (error) {
+            console.error('保存阅读进度失败:', error);
+          }
+        }
+      }, 500);
     });
 
     onMounted(async () => {
@@ -88,7 +109,23 @@ export default defineComponent({
       try {
         await pdfService.openPDF(fileId.value);
         totalPages.value = await pdfService.getPageCount(fileId.value);
+        
+        // 先渲染内容
         await renderInitialPages();
+        
+        // 然后恢复阅读进度
+        const progress = pdfService.getReadingProgress(fileId.value);
+        if (progress) {
+          console.log('恢复阅读进度:', progress);
+          zoom.value = progress.zoom;
+          
+          // 使用 nextTick 确保 DOM 更新后再设置滚动位置
+          setTimeout(() => {
+            scrollTop.value = progress.scrollTop;
+            currentPage.value = progress.currentPage;
+            console.log('滚动位置已设置:', scrollTop.value);
+          }, 300);
+        }
       } catch (error) {
         console.error('加载PDF文件失败:', error);
       }
@@ -96,7 +133,21 @@ export default defineComponent({
 
     onUnmounted(async () => {
       if (fileId.value) {
-        await pdfService.closePDF(fileId.value);
+        try {
+          // 保存最后的阅读进度
+          console.log('组件卸载，保存最终阅读进度');
+          await pdfService.saveReadingProgress(fileId.value, {
+            scrollTop: scrollTop.value,
+            zoom: zoom.value,
+            currentPage: currentPage.value
+          });
+          await pdfService.closePDF(fileId.value);
+        } catch (error) {
+          console.error('关闭文档时保存阅读进度失败:', error);
+        }
+      }
+      if (saveProgressDebounceTimer.value) {
+        clearTimeout(saveProgressDebounceTimer.value);
       }
     });
 
@@ -117,8 +168,15 @@ export default defineComponent({
       const threshold = scrollHeight - clientHeight * 1.5;
 
       // 计算当前页面
-      const pageHeight = clientHeight / visiblePages.value;
-      currentPage.value = Math.ceil(currentScrollTop / pageHeight) + 1;
+      let calculatedPage = 1;
+      if (contentHeight.value > 0 && viewportHeight.value > 0) {
+        const scrollRatio = currentScrollTop / (contentHeight.value - viewportHeight.value);
+        calculatedPage = Math.max(1, Math.min(Math.ceil(scrollRatio * totalPages.value), totalPages.value));
+      }
+      
+      if (calculatedPage !== currentPage.value) {
+        currentPage.value = calculatedPage;
+      }
 
       if (scrollBottom > threshold) {
         isLoading.value = true;

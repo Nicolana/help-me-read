@@ -84,11 +84,20 @@ export class PDFService {
     try {
       const appDataPath = await appDataDir()
       const cachePath = await join(appDataPath, this.CACHE_FILE)
-      const obj = Object.fromEntries(this.cache)
-      await writeTextFile(cachePath, JSON.stringify(obj, null, 2))
-      console.log('缓存已保存，当前文件数:', this.cache.size)
+      const cacheData = Object.fromEntries(this.cache)
+      
+      // 将缓存数据序列化为 JSON 字符串
+      const jsonData = JSON.stringify(cacheData, null, 2)
+      
+      // 输出缓存数据大小
+      console.log(`保存缓存，大小: ${jsonData.length} 字节，文件数: ${this.cache.size}`)
+      
+      // 写入文件
+      await writeTextFile(cachePath, jsonData)
+      console.log('缓存已成功保存到磁盘')
     } catch (error) {
       console.error('保存缓存失败:', error)
+      throw error
     }
   }
 
@@ -437,5 +446,62 @@ export class PDFService {
     }).promise
 
     return canvas.toDataURL('image/png')
+  }
+
+  public async saveReadingProgress(id: string, progress: { scrollTop: number; zoom: number; currentPage: number }): Promise<void> {
+    try {
+      console.log('保存阅读进度:', id, progress);
+      
+      await this.ensureInitialized(); // 确保服务已初始化
+      
+      const cache = this.cache.get(id);
+      if (!cache) {
+        console.error('保存阅读进度失败: PDF不存在', id);
+        throw new Error('PDF not found');
+      }
+
+      cache.readingProgress = {
+        ...progress,
+        lastUpdated: new Date().toISOString()
+      };
+      
+      // 更新最后访问时间
+      cache.lastAccessed = new Date().toISOString();
+      
+      await this.saveCacheToStorage();
+      console.log('阅读进度已保存');
+    } catch (error) {
+      console.error('保存阅读进度失败:', error);
+      throw error;
+    }
+  }
+
+  public getReadingProgress(id: string): { scrollTop: number; zoom: number; currentPage: number } | null {
+    try {
+      console.log('获取阅读进度:', id);
+      
+      const cache = this.cache.get(id);
+      if (!cache) {
+        console.log('获取阅读进度失败: PDF不存在', id);
+        return null;
+      }
+      
+      if (!cache.readingProgress) {
+        console.log('PDF没有保存的阅读进度');
+        return null;
+      }
+
+      const progress = {
+        scrollTop: cache.readingProgress.scrollTop,
+        zoom: cache.readingProgress.zoom,
+        currentPage: cache.readingProgress.currentPage
+      };
+      
+      console.log('已获取阅读进度:', progress);
+      return progress;
+    } catch (error) {
+      console.error('获取阅读进度失败:', error);
+      return null;
+    }
   }
 } 
