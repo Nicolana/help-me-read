@@ -320,6 +320,65 @@ export class PDFService {
     }).promise
   }
 
+  public async renderPages(id: string, startPage: number, endPage: number, container: HTMLElement, scale: number = 1): Promise<void> {
+    const pdf = this.activePDFs.get(id)
+    if (!pdf) {
+      throw new Error('PDF not loaded')
+    }
+
+    // 获取或创建页面容器
+    let pagesContainer = container.querySelector('.pdf-pages-container') as HTMLDivElement
+    if (!pagesContainer) {
+      pagesContainer = document.createElement('div')
+      pagesContainer.className = 'pdf-pages-container'
+      pagesContainer.style.display = 'flex'
+      pagesContainer.style.flexDirection = 'column'
+      pagesContainer.style.gap = '20px'
+      container.appendChild(pagesContainer)
+    }
+
+    // 渲染每一页
+    for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
+      // 检查页面是否已经渲染
+      const existingCanvas = pagesContainer.querySelector(`[data-page="${pageNum}"]`)
+      if (existingCanvas) continue
+
+      const page = await pdf.getPage(pageNum)
+      const viewport = page.getViewport({ scale, rotation: 0 })
+      
+      const canvas = document.createElement('canvas')
+      canvas.setAttribute('data-page', pageNum.toString())
+      const context = canvas.getContext('2d', { alpha: false })
+      if (!context) {
+        throw new Error('Failed to get canvas context')
+      }
+
+      // 设置 canvas 的物理像素大小
+      const outputScale = window.devicePixelRatio || 1
+      canvas.width = Math.floor(viewport.width * outputScale)
+      canvas.height = Math.floor(viewport.height * outputScale)
+      
+      // 设置 canvas 的 CSS 大小
+      canvas.style.width = `${viewport.width}px`
+      canvas.style.height = `${viewport.height}px`
+      
+      // 设置画布缩放以匹配设备像素比
+      context.scale(outputScale, outputScale)
+
+      await page.render({
+        canvasContext: context,
+        viewport: viewport,
+        intent: 'display',
+        renderInteractiveForms: true,
+        enableWebGL: true,
+        cMapUrl: 'https://unpkg.com/pdfjs-dist@3.11.174/cmaps/',
+        cMapPacked: true,
+      }).promise
+
+      pagesContainer.appendChild(canvas)
+    }
+  }
+
   public async getPageCount(id: string): Promise<number> {
     const pdf = this.activePDFs.get(id)
     if (!pdf) {

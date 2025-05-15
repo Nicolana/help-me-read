@@ -15,20 +15,16 @@
         </div>
         <div class="toolbar-divider"></div>
         <div class="page-control">
-          <button @click="handlePrevPage" :disabled="currentPage <= 1">上一页</button>
-          <div class="page-control-span">
+          <span class="page-control-span">
             <span class="page-control-span-current">{{ currentPage }}</span>
             <span class="page-control-span-divider"> / </span>
             <span class="page-control-span-total">{{ totalPages }}</span>
-          </div>
-          <button @click="handleNextPage" :disabled="currentPage >= totalPages">下一页</button>
+          </span>
         </div>
       </div>
     </div>
-    <div class="pdf-content" ref="pdfContent">
-      <div class="page-container">
-        <canvas ref="pageCanvas"></canvas>
-      </div>
+    <div class="pdf-content" ref="pdfContent" @scroll="handleScroll">
+      <div class="pages-container" ref="pagesContainer"></div>
     </div>
   </div>
 </template>
@@ -43,12 +39,15 @@ export default defineComponent({
     const route = useRoute();
     const router = useRouter();
     const pdfContent = ref<HTMLElement | null>(null);
-    const pageCanvas = ref<HTMLCanvasElement | null>(null);
+    const pagesContainer = ref<HTMLElement | null>(null);
     const zoom = ref(1);
     const pdfService = PDFService.getInstance();
     const fileId = ref<string>('');
     const currentPage = ref(1);
     const totalPages = ref(0);
+    const visiblePages = ref(5); // 每次渲染的页面数量
+    const isLoading = ref(false);
+    const lastScrollTop = ref(0);
 
     onMounted(async () => {
       fileId.value = route.query.id as string;
@@ -60,7 +59,7 @@ export default defineComponent({
       try {
         await pdfService.openPDF(fileId.value);
         totalPages.value = await pdfService.getPageCount(fileId.value);
-        await renderPage();
+        await renderInitialPages();
       } catch (error) {
         console.error('加载PDF文件失败:', error);
       }
@@ -72,34 +71,65 @@ export default defineComponent({
       }
     });
 
-    const renderPage = async () => {
-      if (!pageCanvas.value) return;
+    const renderInitialPages = async () => {
+      if (!pagesContainer.value) return;
+      const endPage = Math.min(visiblePages.value, totalPages.value);
+      await pdfService.renderPages(fileId.value, 1, endPage, pagesContainer.value, zoom.value);
+    };
 
-      try {
-        await pdfService.renderPage(fileId.value, currentPage.value, pageCanvas.value, zoom.value);
-      } catch (error) {
-        console.error('渲染页面失败:', error);
+    const handleScroll = async () => {
+      if (!pdfContent.value || isLoading.value) return;
+
+      const { scrollTop, scrollHeight, clientHeight } = pdfContent.value;
+      const scrollBottom = scrollTop + clientHeight;
+      const threshold = scrollHeight - clientHeight * 1.5;
+
+      // 保存当前滚动位置
+      lastScrollTop.value = scrollTop;
+
+      if (scrollBottom > threshold) {
+        isLoading.value = true;
+        const startPage = currentPage.value + 1;
+        const endPage = Math.min(startPage + visiblePages.value - 1, totalPages.value);
+        
+        if (startPage <= totalPages.value) {
+          await pdfService.renderPages(fileId.value, startPage, endPage, pagesContainer.value!, zoom.value);
+          currentPage.value = endPage;
+          
+          // 恢复滚动位置
+          if (pdfContent.value) {
+            pdfContent.value.scrollTop = lastScrollTop.value;
+          }
+        }
+        isLoading.value = false;
       }
     };
 
     const handleZoom = async (newZoom: number) => {
       if (newZoom >= 0.5 && newZoom <= 2) {
+        const oldZoom = zoom.value;
         zoom.value = newZoom;
-        await renderPage();
-      }
-    };
-
-    const handlePrevPage = async () => {
-      if (currentPage.value > 1) {
-        currentPage.value--;
-        await renderPage();
-      }
-    };
-
-    const handleNextPage = async () => {
-      if (currentPage.value < totalPages.value) {
-        currentPage.value++;
-        await renderPage();
+        
+        if (pagesContainer.value) {
+          // 保存当前滚动位置和可见页面范围
+          const scrollTop = pdfContent.value?.scrollTop || 0;
+          const visibleHeight = pdfContent.value?.clientHeight || 0;
+          const pageHeight = pagesContainer.value.children[0]?.clientHeight || 0;
+          const currentVisiblePage = Math.floor(scrollTop / (pageHeight + 20)) + 1;
+          
+          // 重新渲染所有页面
+          const startPage = Math.max(1, currentVisiblePage - 2);
+          const endPage = Math.min(startPage + visiblePages.value + 2, totalPages.value);
+          
+          await pdfService.renderPages(fileId.value, startPage, endPage, pagesContainer.value, zoom.value);
+          
+          // 调整滚动位置以保持相对位置
+          if (pdfContent.value) {
+            const newPageHeight = pagesContainer.value.children[0]?.clientHeight || 0;
+            const scale = newPageHeight / pageHeight;
+            pdfContent.value.scrollTop = scrollTop * scale;
+          }
+        }
       }
     };
 
@@ -114,10 +144,10 @@ export default defineComponent({
       zoom,
       currentPage,
       totalPages,
-      pageCanvas,
+      pdfContent,
+      pagesContainer,
       handleZoom,
-      handlePrevPage,
-      handleNextPage,
+      handleScroll,
       handleClose
     };
   }
@@ -133,10 +163,24 @@ export default defineComponent({
 }
 
 .pdf-content {
+  flex: 1;
   overflow-y: auto;
-  display: flex;
-  justify-content: center;
   padding: 20px;
+  scroll-behavior: smooth;
+}
+
+.pages-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  min-height: 100%;
+}
+
+.pages-container canvas {
+  background-color: white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s ease;
 }
 
 .pdf-toolbar {
@@ -256,15 +300,6 @@ export default defineComponent({
 
 .close-btn:hover {
   background-color: #353535;
-}
-
-.page-container {
-  background-color: white;
-  height: fit-content;
-}
-
-.page-container canvas {
-  display: block;
 }
 </style>
   
