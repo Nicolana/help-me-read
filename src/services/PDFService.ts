@@ -345,6 +345,8 @@ export class PDFService {
       throw new Error('PDF not loaded')
     }
 
+    console.log(`开始渲染页面 ${startPage} 到 ${endPage}，缩放比例: ${scale}`);
+
     // 获取或创建页面容器
     let pagesContainer = container.querySelector('.pdf-pages-container') as HTMLDivElement
     if (!pagesContainer) {
@@ -356,17 +358,53 @@ export class PDFService {
       container.appendChild(pagesContainer)
     }
 
+    // 如果是直接从中间页面开始渲染（恢复阅读进度的情况）
+    // 创建前面页面的占位元素，保持正确的滚动位置
+    if (startPage > 1 && !pagesContainer.querySelector('[data-page="1"]')) {
+      console.log(`创建 ${startPage-1} 个占位元素`);
+      // 获取第一页的尺寸作为参考
+      const firstPage = await pdf.getPage(1);
+      const viewport = firstPage.getViewport({ scale });
+      
+      // 创建占位元素
+      for (let i = 1; i < startPage; i++) {
+        if (!pagesContainer.querySelector(`[data-page="${i}"]`)) {
+          const placeholder = document.createElement('div');
+          placeholder.setAttribute('data-page', i.toString());
+          placeholder.setAttribute('data-placeholder', 'true');
+          placeholder.style.width = `${viewport.width}px`;
+          placeholder.style.height = `${viewport.height}px`;
+          placeholder.style.backgroundColor = 'transparent';
+          
+          // 将占位符插入到容器的开头
+          if (pagesContainer.firstChild) {
+            pagesContainer.insertBefore(placeholder, pagesContainer.firstChild);
+          } else {
+            pagesContainer.appendChild(placeholder);
+          }
+        }
+      }
+    }
+
     const pageHeights: number[] = []
 
     // 渲染每一页
     for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
       // 检查页面是否已经渲染
-      const existingCanvas = pagesContainer.querySelector(`[data-page="${pageNum}"]`)
+      const existingCanvas = pagesContainer.querySelector(`[data-page="${pageNum}"]:not([data-placeholder])`)
       if (existingCanvas) {
+        console.log(`页面 ${pageNum} 已存在，跳过渲染`);
         pageHeights.push(existingCanvas.clientHeight)
         continue
       }
 
+      // 删除该页面的占位符（如果有）
+      const placeholder = pagesContainer.querySelector(`[data-page="${pageNum}"][data-placeholder]`);
+      if (placeholder) {
+        placeholder.remove();
+      }
+
+      console.log(`渲染页面 ${pageNum}`);
       const page = await pdf.getPage(pageNum)
       const viewport = page.getViewport({ scale, rotation: 0 })
       
@@ -399,10 +437,26 @@ export class PDFService {
         cMapPacked: true,
       }).promise
 
-      pagesContainer.appendChild(canvas)
+      // 确定插入位置：插入到对应位置（按页码顺序）
+      let inserted = false;
+      const allPages = pagesContainer.querySelectorAll('[data-page]');
+      for (let i = 0; i < allPages.length; i++) {
+        const currentPage = parseInt(allPages[i].getAttribute('data-page') || '0');
+        if (currentPage > pageNum) {
+          pagesContainer.insertBefore(canvas, allPages[i]);
+          inserted = true;
+          break;
+        }
+      }
+      
+      if (!inserted) {
+        pagesContainer.appendChild(canvas);
+      }
+      
       pageHeights.push(canvas.clientHeight)
     }
 
+    console.log(`渲染完成，共渲染 ${endPage - startPage + 1} 页`);
     return { pageHeights }
   }
 

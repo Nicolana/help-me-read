@@ -110,21 +110,34 @@ export default defineComponent({
         await pdfService.openPDF(fileId.value);
         totalPages.value = await pdfService.getPageCount(fileId.value);
         
-        // 先渲染内容
-        await renderInitialPages();
-        
-        // 然后恢复阅读进度
+        // 获取阅读进度
         const progress = pdfService.getReadingProgress(fileId.value);
+        
         if (progress) {
           console.log('恢复阅读进度:', progress);
+          // 设置缩放比例
           zoom.value = progress.zoom;
+          // 设置当前页面
+          currentPage.value = progress.currentPage;
           
-          // 使用 nextTick 确保 DOM 更新后再设置滚动位置
-          setTimeout(() => {
+          // 计算页面范围，以当前页为中心
+          const halfVisible = Math.floor(visiblePages.value / 2);
+          const startPage = Math.max(1, progress.currentPage - halfVisible);
+          const endPage = Math.min(startPage + visiblePages.value - 1, totalPages.value);
+          
+          // 从缓存位置附近开始渲染
+          console.log(`直接渲染页面 ${startPage} 到 ${endPage}`);
+          await pdfService.renderPages(fileId.value, startPage, endPage, pagesContainer.value!, zoom.value);
+          
+          // 设置滚动位置
+          requestAnimationFrame(() => {
             scrollTop.value = progress.scrollTop;
-            currentPage.value = progress.currentPage;
             console.log('滚动位置已设置:', scrollTop.value);
-          }, 300);
+          });
+        } else {
+          // 没有阅读进度时从头开始
+          console.log('没有找到阅读进度，从头开始渲染');
+          await renderInitialPages();
         }
       } catch (error) {
         console.error('加载PDF文件失败:', error);
@@ -154,6 +167,7 @@ export default defineComponent({
     const renderInitialPages = async () => {
       if (!pagesContainer.value) return;
       const endPage = Math.min(visiblePages.value, totalPages.value);
+      console.log(`初始渲染页面 1 到 ${endPage}`);
       await pdfService.renderPages(fileId.value, 1, endPage, pagesContainer.value, zoom.value);
     };
 
@@ -168,14 +182,22 @@ export default defineComponent({
       const threshold = scrollHeight - clientHeight * 1.5;
 
       // 计算当前页面
-      let calculatedPage = 1;
-      if (contentHeight.value > 0 && viewportHeight.value > 0) {
-        const scrollRatio = currentScrollTop / (contentHeight.value - viewportHeight.value);
-        calculatedPage = Math.max(1, Math.min(Math.ceil(scrollRatio * totalPages.value), totalPages.value));
-      }
-      
-      if (calculatedPage !== currentPage.value) {
-        currentPage.value = calculatedPage;
+      // 查找当前可见的页面
+      const canvases = pagesContainer.value?.querySelectorAll('canvas[data-page]');
+      if (canvases && canvases.length > 0) {
+        for (let i = 0; i < canvases.length; i++) {
+          const canvas = canvases[i];
+          const rect = canvas.getBoundingClientRect();
+          const pageNum = parseInt(canvas.getAttribute('data-page') || '0');
+          
+          // 如果页面的顶部在视口内或刚好在视口上方，认为这是当前页
+          if (rect.top <= clientHeight/2 && rect.bottom >= 0) {
+            if (pageNum !== currentPage.value) {
+              currentPage.value = pageNum;
+              break;
+            }
+          }
+        }
       }
 
       // 自动加载更多页面
@@ -184,8 +206,9 @@ export default defineComponent({
         try {
           console.log('接近底部，加载更多页面');
           // 确定下一批要加载的页面范围
-          const renderedPages = pagesContainer.value?.querySelectorAll('canvas').length || 0;
-          const startPage = renderedPages + 1;
+          const renderedPages = pagesContainer.value?.querySelectorAll('canvas[data-page]').length || 0;
+          const highestPage = getHighestRenderedPage();
+          const startPage = highestPage + 1;
           const endPage = Math.min(startPage + visiblePages.value - 1, totalPages.value);
           
           if (startPage <= totalPages.value) {
@@ -198,6 +221,20 @@ export default defineComponent({
           isLoading.value = false;
         }
       }
+    };
+
+    // 获取当前渲染的最高页码
+    const getHighestRenderedPage = (): number => {
+      const pages = pagesContainer.value?.querySelectorAll('[data-page]');
+      if (!pages || pages.length === 0) return 0;
+      
+      let highest = 0;
+      pages.forEach(page => {
+        const pageNum = parseInt(page.getAttribute('data-page') || '0');
+        highest = Math.max(highest, pageNum);
+      });
+      
+      return highest;
     };
 
     const handleZoom = async (newZoom: number) => {
