@@ -52,7 +52,7 @@
           />
         </div>
         <div class="file-info">
-          <h3>{{ file.name }}</h3>
+          <h3>{{ formatName(file.name) }}</h3>
           <div class="file-meta">
             <span>{{ formatFileSize(file.size) }}</span>
             <FileMenu @action="handleMenuAction($event, file)" @click.stop />
@@ -222,6 +222,10 @@ const formatDate = (dateString: string): string => {
   })
 }
 
+const formatName = (name: string): string => {
+  return name.split('.pdf')[0]
+}
+
 const handleMenuAction = async (action: string, file: PDFMetadata) => {
   switch (action) {
     case 'view':
@@ -344,6 +348,8 @@ const handleImageError = (event: Event) => {
       min-width: 0;
       cursor: pointer;
       transition: all 0.2s ease;
+      overflow: visible;
+      
       
       &:hover {
         transform: translateY(-2px);
@@ -379,10 +385,12 @@ const handleImageError = (event: Event) => {
           font-size: 0.9rem;
           color: #353535;
           display: -webkit-box;
+          line-clamp: 2;
           -webkit-line-clamp: 2;
           -webkit-box-orient: vertical;
           overflow: hidden;
           line-height: 1.3;
+          white-space: inherit;
         }
         
         .file-meta {
