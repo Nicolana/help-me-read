@@ -76,7 +76,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { PDFService } from '../services/PDFService'
+import { PDFService } from '../services/pdf'
 import type { PDFMetadata } from '../types/pdf'
 import { sendNotification } from '@tauri-apps/plugin-notification'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
@@ -349,7 +349,7 @@ const handleImageError = (event: Event) => {
       cursor: pointer;
       transition: all 0.2s ease;
       overflow: visible;
-      
+
       
       &:hover {
         transform: translateY(-2px);
