@@ -127,8 +127,11 @@ export class PDFService {
     return this.renderManager.getThumbnail(id, pageNumber)
   }
 
-  public async renderThumbnail(id: string, pageNumber: number, canvas: HTMLCanvasElement, scale: number = 0.2): Promise<void> {
-    return this.renderManager.renderThumbnail(id, pageNumber, canvas, scale)
+  /**
+   * 渲染缩略图，返回图片URL
+   */
+  public async renderThumbnail(id: string, pageNumber: number, scale: number = 0.2): Promise<string> {
+    return this.renderManager.renderThumbnail(id, pageNumber, scale)
   }
 
   public async closePDF(id: string): Promise<void> {

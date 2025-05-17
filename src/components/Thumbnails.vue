@@ -9,6 +9,7 @@
         class="thumbnails-content" 
         :style="{ height: `${totalContentHeight}px` }"
       >
+        <!-- 只在DOM中创建可见的缩略图元素 -->
         <div 
           v-for="item in visibleItems" 
           :key="item.pageNum" 
@@ -24,16 +25,9 @@
         >
           <div class="thumbnail-page-number">{{ item.pageNum }}</div>
           
-          <!-- 缩略图内容区域 - 同时包含canvas和img，通过css控制显示 -->
+          <!-- 缩略图内容区域 -->
           <div class="thumbnail-content">
-            <!-- 始终渲染canvas元素，用于初始渲染，但在有图片时隐藏 -->
-            <canvas 
-              :data-page="item.pageNum" 
-              class="thumbnail-canvas"
-              :class="{ 'canvas-hidden': thumbnails[item.pageNum] }"
-            ></canvas>
-            
-            <!-- 显示已缓存的图片 -->
+            <!-- 显示缩略图图片 -->
             <img 
               v-if="thumbnails[item.pageNum]" 
               :src="thumbnails[item.pageNum]" 
@@ -272,7 +266,7 @@ export default defineComponent({
       }
     };
 
-    // 加载缩略图（从缓存或通过渲染）
+    // 加载缩略图
     const loadThumbnail = async (pageNum: number) => {
       if (!props.fileId || renderPromises.value.has(pageNum)) return;
       
@@ -292,43 +286,16 @@ export default defineComponent({
           while (renderAttempts < maxAttempts) {
             renderAttempts++;
             try {
-              // 首先尝试使用缓存
-              const isCached = await thumbnailCache.hasThumbnail(props.fileId, pageNum);
-              
-              if (isCached) {
-                // 从缓存加载缩略图
-                const imageUrl = await thumbnailCache.getThumbnail(props.fileId, pageNum);
-                thumbnails.value[pageNum] = imageUrl;
-                
-                // 记录已成功渲染的页面
-                renderedPages.value.add(pageNum);
-                break;
-              }
-              
-              // 缓存不存在，使用canvas渲染
+              // 直接渲染缩略图并获取URL
               const thumbnailScale = 0.2;
+              const imageUrl = await pdfService.renderThumbnail(props.fileId, pageNum, thumbnailScale);
               
-              // 修复获取canvas元素的方式，添加延迟确保DOM已更新
-              await new Promise(resolve => setTimeout(resolve, 10));
-              const canvas = thumbnailsContainer.value?.querySelector(`canvas[data-page="${pageNum}"]`) as HTMLCanvasElement;
+              // 保存到内存缓存
+              thumbnails.value[pageNum] = imageUrl;
               
-              if (canvas) {
-                console.log(`找到canvas元素，准备渲染页面 ${pageNum}`);
-                await pdfService.renderThumbnail(props.fileId, pageNum, canvas, thumbnailScale);
-                
-                // PDFRenderManager现在会自动缓存渲染后的缩略图
-                // 然后我们获取缓存的图像URL并在内存中保存
-                const imageUrl = await thumbnailCache.getThumbnail(props.fileId, pageNum);
-                thumbnails.value[pageNum] = imageUrl;
-                
-                // 记录已成功渲染的页面
-                renderedPages.value.add(pageNum);
-                break;
-              } else {
-                // 没有找到canvas元素，可能是DOM已更新
-                console.error(`未找到canvas元素，页面 ${pageNum}`);
-                throw new Error('Canvas element not found');
-              }
+              // 记录已成功渲染的页面
+              renderedPages.value.add(pageNum);
+              break;
             } catch (err) {
               console.error(`渲染尝试 ${renderAttempts}/${maxAttempts} 失败:`, err);
               
@@ -503,7 +470,7 @@ export default defineComponent({
 }
 
 .thumbnails-panel-visible {
-  width: 200px;
+  width: 150px;
 }
 
 .thumbnails-container {
@@ -532,6 +499,7 @@ export default defineComponent({
   border: 2px solid transparent;
   transition: all 0.2s ease;
   overflow: hidden;
+  border-radius: 4px;
 }
 
 .thumbnail-item:hover {
@@ -559,26 +527,16 @@ export default defineComponent({
   width: 100%;
   height: 100%;
   overflow: hidden;
-}
-
-.thumbnail-canvas {
-  width: 100%;
-  height: 100%;
-  position: absolute;
-  top: 0;
-  left: 0;
-}
-
-.canvas-hidden {
-  visibility: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: rgba(0, 0, 0, 0.1);
 }
 
 .thumbnail-image {
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  position: relative;
-  z-index: 1;
+  object-fit: cover;
 }
 
 .thumbnail-loading-indicator, 

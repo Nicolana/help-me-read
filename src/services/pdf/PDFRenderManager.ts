@@ -297,41 +297,21 @@ export class PDFRenderManager {
     return canvas.toDataURL('image/png')
   }
 
-  public async renderThumbnail(id: string, pageNumber: number, canvas: HTMLCanvasElement, scale: number = 0.2): Promise<void> {
+  /**
+   * 获取缩略图
+   * 不再接受canvas参数，直接返回图片URL
+   */
+  public async renderThumbnail(id: string, pageNumber: number, scale: number = 0.2): Promise<string> {
     try {
       // 首先检查缓存中是否已有该缩略图
       const isCached = await this.thumbnailCache.hasThumbnail(id, pageNumber, scale)
       
       if (isCached) {
-        // 如果缓存中存在，直接加载缓存的图像
-        const imageUrl = await this.thumbnailCache.getThumbnail(id, pageNumber, scale)
-        
-        // 将图像绘制到canvas上
-        const img = new Image()
-        img.src = imageUrl
-        
-        await new Promise<void>((resolve, reject) => {
-          img.onload = () => {
-            // 设置canvas尺寸为图像尺寸
-            canvas.width = img.width
-            canvas.height = img.height
-            
-            // 绘制图像到canvas
-            const ctx = canvas.getContext('2d')
-            if (ctx) {
-              ctx.drawImage(img, 0, 0)
-              resolve()
-            } else {
-              reject(new Error('Failed to get canvas context'))
-            }
-          }
-          img.onerror = () => reject(new Error('Failed to load cached thumbnail'))
-        })
-        
-        return
+        // 如果缓存中存在，直接返回图像URL
+        return await this.thumbnailCache.getThumbnail(id, pageNumber, scale)
       }
       
-      // 缓存中不存在，则正常渲染
+      // 缓存中不存在，则渲染并保存
       const pdf = this.activePDFs.get(id)
       if (!pdf) {
         throw new Error('PDF not loaded')
@@ -340,29 +320,35 @@ export class PDFRenderManager {
       const page = await pdf.getPage(pageNumber)
       const viewport = page.getViewport({ scale, rotation: 0 })
       
+      // 创建临时canvas进行渲染
+      const canvas = document.createElement('canvas')
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+      
       const context = canvas.getContext('2d')
       if (!context) {
         throw new Error('Failed to get canvas context')
       }
 
-      canvas.width = viewport.width
-      canvas.height = viewport.height
-
+      // 渲染到canvas
       await page.render({
         canvasContext: context,
         viewport: viewport
       }).promise
       
-      // 渲染完成后，保存到缓存
       try {
         // 将canvas转换为二进制数据
         const imageData = await this.thumbnailCache.canvasToBytes(canvas)
         
         // 保存到缓存
         await this.thumbnailCache.saveThumbnail(id, pageNumber, imageData, scale)
+        
+        // 从缓存获取图像URL
+        return await this.thumbnailCache.getThumbnail(id, pageNumber, scale)
       } catch (cacheError) {
-        // 缓存失败不应阻止主流程，只记录错误
-        console.error('保存缩略图到缓存失败:', cacheError)
+        // 缓存失败，直接返回canvas的dataURL
+        console.error('保存缩略图到缓存失败，返回临时图像:', cacheError)
+        return canvas.toDataURL('image/png')
       }
     } catch (error) {
       console.error(`渲染缩略图失败 (ID: ${id}, 页码: ${pageNumber}):`, error)
