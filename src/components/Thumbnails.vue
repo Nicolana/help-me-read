@@ -14,9 +14,7 @@
           :key="item.pageNum" 
           class="thumbnail-item"
           :class="{ 
-            'thumbnail-active': item.pageNum === currentPage,
-            'thumbnail-loading': loadingPages.includes(item.pageNum),
-            'thumbnail-error': errorPages.includes(item.pageNum)
+            'thumbnail-active': item.pageNum === currentPage
           }"
           :style="{ 
             transform: `translateY(${item.offsetY}px)`,
@@ -25,13 +23,41 @@
           @click="selectPage(item.pageNum)"
         >
           <div class="thumbnail-page-number">{{ item.pageNum }}</div>
-          <div v-if="loadingPages.includes(item.pageNum)" class="thumbnail-loading-indicator">
-            <div class="loading-spinner"></div>
+          
+          <!-- 缩略图内容区域 - 同时包含canvas和img，通过css控制显示 -->
+          <div class="thumbnail-content">
+            <!-- 始终渲染canvas元素，用于初始渲染，但在有图片时隐藏 -->
+            <canvas 
+              :data-page="item.pageNum" 
+              class="thumbnail-canvas"
+              :class="{ 'canvas-hidden': thumbnails[item.pageNum] }"
+            ></canvas>
+            
+            <!-- 显示已缓存的图片 -->
+            <img 
+              v-if="thumbnails[item.pageNum]" 
+              :src="thumbnails[item.pageNum]" 
+              class="thumbnail-image" 
+              :alt="`Page ${item.pageNum}`" 
+            />
+            
+            <!-- 加载指示器 -->
+            <div 
+              v-if="loadingPages.includes(item.pageNum)" 
+              class="thumbnail-loading-indicator"
+            >
+              <div class="loading-spinner"></div>
+            </div>
+            
+            <!-- 错误指示器 -->
+            <div 
+              v-if="errorPages.includes(item.pageNum)" 
+              class="thumbnail-error-indicator" 
+              @click.stop="retryRender(item.pageNum)"
+            >
+              <span>重试</span>
+            </div>
           </div>
-          <div v-else-if="errorPages.includes(item.pageNum)" class="thumbnail-error-indicator" @click.stop="retryRender(item.pageNum)">
-            <span>重试</span>
-          </div>
-          <canvas :ref="el => registerCanvasRef(el as HTMLCanvasElement, item.pageNum)" :data-page="item.pageNum"></canvas>
         </div>
       </div>
     </div>
@@ -48,6 +74,7 @@
 import { defineComponent, ref, computed, watch, onBeforeUnmount } from 'vue';
 import CustomScrollbar from './CustomScrollbar.vue';
 import { PDFService } from '../services/pdf';
+import { ThumbnailCache } from '../services/thumbnail-cache';
 
 interface ThumbnailItem {
   pageNum: number;
@@ -83,9 +110,10 @@ export default defineComponent({
     const scrollTop = ref(0);
     const visible = ref(false);
     const pdfService = PDFService.getInstance();
+    const thumbnailCache = ThumbnailCache.getInstance();
     
-    // Canvas引用缓存
-    const canvasRefs = ref<Map<number, HTMLCanvasElement>>(new Map());
+    // 缩略图数据URL存储
+    const thumbnails = ref<Record<number, string>>({});
     
     // 渲染状态管理
     const renderedPages = ref<Set<number>>(new Set());
@@ -104,22 +132,6 @@ export default defineComponent({
     const scrollThrottleDelay = 100; // 滚动节流延迟(ms)
     let throttleTimer: number | null = null;
     let lastScrollTime = 0;
-    
-    // 注册Canvas引用，用于在DOM创建后立即获取引用
-    const registerCanvasRef = (el: HTMLCanvasElement | null, pageNum: number) => {
-      if (el) {
-        canvasRefs.value.set(pageNum, el);
-        // 如果页面已被加入队列但尚未渲染，尝试渲染
-        if (!renderedPages.value.has(pageNum) && 
-            !loadingPages.value.includes(pageNum) && 
-            !renderPromises.value.has(pageNum)) {
-          renderThumbnail(pageNum);
-        }
-      } else {
-        // 元素被销毁时从引用中移除
-        canvasRefs.value.delete(pageNum);
-      }
-    };
     
     // 计算所有缩略图的总高度
     const totalContentHeight = computed(() => {
@@ -199,17 +211,17 @@ export default defineComponent({
       const currentVisiblePageNumbers = visibleItems.value.map(item => item.pageNum);
       const pagesToRender: number[] = [];
       
-      // 找出尚未渲染的页面
+      // 找出尚未渲染或加载的页面
       for (const pageNum of currentVisiblePageNumbers) {
         if (!renderedPages.value.has(pageNum) && 
             !loadingPages.value.includes(pageNum) && 
             !renderPromises.value.has(pageNum) &&
-            canvasRefs.value.has(pageNum)) { // 确保DOM已创建
+            !thumbnails.value[pageNum]) {
           pagesToRender.push(pageNum);
         }
       }
       
-      // 如果有需要渲染的页面，按顺序优先级排序并渲染
+      // 如果有需要渲染的页面，按优先级排序并渲染
       if (pagesToRender.length > 0) {
         // 优先渲染当前页面附近的缩略图
         pagesToRender.sort((a, b) => {
@@ -219,17 +231,17 @@ export default defineComponent({
         // 限制并发渲染数量
         const pagesToProcess = pagesToRender.slice(0, maxConcurrentRenders);
         for (const pageNum of pagesToProcess) {
-          renderThumbnail(pageNum);
+          loadThumbnail(pageNum);
         }
       }
       
-      // 清理不再可见的页面缓存（仅当缓存页数超过最大值时）
-      if (renderedPages.value.size > maxCachedPages) {
+      // 清理不再可见的页面缓存（仅当内存缓存页数超过最大值时）
+      if (Object.keys(thumbnails.value).length > maxCachedPages) {
         cleanupCache(currentVisiblePageNumbers);
       }
     };
 
-    // 清理不再可见的缩略图缓存
+    // 清理不再可见的缩略图内存缓存
     const cleanupCache = (currentVisiblePageNumbers: number[]) => {
       const currentVisible = new Set(currentVisiblePageNumbers);
       const pagesToKeep = new Set<number>();
@@ -247,32 +259,22 @@ export default defineComponent({
         pagesToKeep.add(i);
       }
       
-      // 移除不需要保留的缩略图缓存
-      const allRendered = Array.from(renderedPages.value);
-      const pagesToRemove = allRendered.filter(pageNum => !pagesToKeep.has(pageNum));
+      // 移除不需要保留的缩略图内存缓存
+      const allCachedPages = Object.keys(thumbnails.value).map(Number);
+      const pagesToRemove = allCachedPages.filter(pageNum => !pagesToKeep.has(pageNum));
       
-      // 仅保留最近渲染的页面，释放多余的缓存
-      if (renderedPages.value.size - pagesToRemove.length > maxCachedPages / 2) {
-        const pagesToActuallyRemove = pagesToRemove.slice(0, renderedPages.value.size - maxCachedPages / 2);
-        
-        for (const pageNum of pagesToActuallyRemove) {
+      // 只清理内存缓存，不影响文件系统缓存
+      if (pagesToRemove.length > 0) {
+        for (const pageNum of pagesToRemove) {
+          delete thumbnails.value[pageNum];
           renderedPages.value.delete(pageNum);
-          
-          // 由于DOM元素已经被移除，不需要手动清理canvas
-          // 但从页面渲染状态中移除
-          errorPages.value = errorPages.value.filter(p => p !== pageNum);
         }
       }
     };
 
-    // 渲染单个缩略图
-    const renderThumbnail = async (pageNum: number) => {
-      if (!props.fileId) return;
-      if (renderPromises.value.has(pageNum)) return;
-      
-      // 获取canvas引用
-      const canvas = canvasRefs.value.get(pageNum);
-      if (!canvas) return; // 如果DOM中没有对应的canvas，跳过渲染
+    // 加载缩略图（从缓存或通过渲染）
+    const loadThumbnail = async (pageNum: number) => {
+      if (!props.fileId || renderPromises.value.has(pageNum)) return;
       
       loadingPages.value.push(pageNum);
       
@@ -290,21 +292,46 @@ export default defineComponent({
           while (renderAttempts < maxAttempts) {
             renderAttempts++;
             try {
-              const thumbnailScale = 0.2;
+              // 首先尝试使用缓存
+              const isCached = await thumbnailCache.hasThumbnail(props.fileId, pageNum);
               
-              await pdfService.renderThumbnail(props.fileId, pageNum, canvas, thumbnailScale);
-              
-              // 记录已成功渲染的页面
-              renderedPages.value.add(pageNum);
-              
-              // 从加载列表中移除
-              const index = loadingPages.value.indexOf(pageNum);
-              if (index !== -1) {
-                loadingPages.value.splice(index, 1);
+              if (isCached) {
+                // 从缓存加载缩略图
+                const imageUrl = await thumbnailCache.getThumbnail(props.fileId, pageNum);
+                thumbnails.value[pageNum] = imageUrl;
+                
+                // 记录已成功渲染的页面
+                renderedPages.value.add(pageNum);
+                break;
               }
               
-              break; // 成功渲染，退出重试循环
+              // 缓存不存在，使用canvas渲染
+              const thumbnailScale = 0.2;
+              
+              // 修复获取canvas元素的方式，添加延迟确保DOM已更新
+              await new Promise(resolve => setTimeout(resolve, 10));
+              const canvas = thumbnailsContainer.value?.querySelector(`canvas[data-page="${pageNum}"]`) as HTMLCanvasElement;
+              
+              if (canvas) {
+                console.log(`找到canvas元素，准备渲染页面 ${pageNum}`);
+                await pdfService.renderThumbnail(props.fileId, pageNum, canvas, thumbnailScale);
+                
+                // PDFRenderManager现在会自动缓存渲染后的缩略图
+                // 然后我们获取缓存的图像URL并在内存中保存
+                const imageUrl = await thumbnailCache.getThumbnail(props.fileId, pageNum);
+                thumbnails.value[pageNum] = imageUrl;
+                
+                // 记录已成功渲染的页面
+                renderedPages.value.add(pageNum);
+                break;
+              } else {
+                // 没有找到canvas元素，可能是DOM已更新
+                console.error(`未找到canvas元素，页面 ${pageNum}`);
+                throw new Error('Canvas element not found');
+              }
             } catch (err) {
+              console.error(`渲染尝试 ${renderAttempts}/${maxAttempts} 失败:`, err);
+              
               if (renderAttempts >= maxAttempts) {
                 throw err; // 达到最大重试次数，抛出错误
               }
@@ -312,6 +339,12 @@ export default defineComponent({
               // 等待一段时间后重试
               await new Promise(resolve => setTimeout(resolve, 500));
             }
+          }
+          
+          // 从加载列表中移除
+          const index = loadingPages.value.indexOf(pageNum);
+          if (index !== -1) {
+            loadingPages.value.splice(index, 1);
           }
         } catch (error) {
           console.error(`渲染缩略图失败 (页面 ${pageNum}):`, error);
@@ -344,7 +377,7 @@ export default defineComponent({
       const errorIndex = errorPages.value.indexOf(pageNum);
       if (errorIndex !== -1) {
         errorPages.value.splice(errorIndex, 1);
-        renderThumbnail(pageNum);
+        loadThumbnail(pageNum);
       }
     };
 
@@ -362,14 +395,15 @@ export default defineComponent({
     watch(() => props.fileId, (newFileId, oldFileId) => {
       if (newFileId !== oldFileId) {
         // 清空之前的渲染缓存
+        thumbnails.value = {};
         renderedPages.value.clear();
         loadingPages.value = [];
         errorPages.value = [];
         renderPromises.value.clear();
-        canvasRefs.value.clear();
         
         if (visible.value) {
-          // 短暂延迟确保DOM已更新
+          console.log('visible', visible.value);
+          // 短暂延迟，确保DOM已更新
           setTimeout(() => {
             queueRenderVisibleThumbnails();
           }, 50);
@@ -393,7 +427,7 @@ export default defineComponent({
       if (visible.value) {
         // 当可见范围变化时，不需要立即调用queueRenderVisibleThumbnails
         // 因为visibleItems会自动更新，DOM会重新创建
-        // 新的canvas元素会通过registerCanvasRef触发渲染
+        // 新的元素会在下次滚动时自动触发渲染
       }
     }, { deep: true });
 
@@ -401,20 +435,6 @@ export default defineComponent({
     watch(() => props.currentPage, (newPage) => {
       updateCurrentPage(newPage);
     });
-
-    // 组件挂载后初始化
-    // onMounted(() => {
-    //   if (visible.value) {
-    //     // 短暂延迟，确保DOM已更新
-    //     setTimeout(() => {
-    //       queueRenderVisibleThumbnails();
-    //     }, 50);
-    //   }
-      
-    //   if (props.currentPage > 0) {
-    //     updateCurrentPage(props.currentPage);
-    //   }
-    // });
     
     // 组件销毁前清理资源
     onBeforeUnmount(() => {
@@ -423,11 +443,11 @@ export default defineComponent({
       }
       
       // 清空渲染缓存
+      thumbnails.value = {};
       renderedPages.value.clear();
       loadingPages.value = [];
       errorPages.value = [];
       renderPromises.value.clear();
-      canvasRefs.value.clear();
     });
 
     // 暴露给外部的方法
@@ -449,7 +469,7 @@ export default defineComponent({
       show,
       hide,
       toggle,
-      renderThumbnail,
+      loadThumbnail,
       updateCurrentPage,
       thumbnailsContainer
     });
@@ -466,7 +486,7 @@ export default defineComponent({
       loadingPages,
       errorPages,
       retryRender,
-      registerCanvasRef
+      thumbnails
     };
   }
 });
@@ -522,15 +542,6 @@ export default defineComponent({
   border-color: #007bff;
 }
 
-.thumbnail-loading {
-  background-color: rgba(0, 0, 0, 0.1);
-}
-
-.thumbnail-error {
-  background-color: rgba(255, 0, 0, 0.1);
-  border-color: rgba(255, 0, 0, 0.3);
-}
-
 .thumbnail-page-number {
   position: absolute;
   top: 5px;
@@ -543,27 +554,34 @@ export default defineComponent({
   z-index: 2;
 }
 
-.thumbnail-loading-indicator {
+.thumbnail-content {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.thumbnail-canvas {
+  width: 100%;
+  height: 100%;
   position: absolute;
   top: 0;
   left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  justify-content: center;
-  align-items: center;
+}
+
+.canvas-hidden {
+  visibility: hidden;
+}
+
+.thumbnail-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  position: relative;
   z-index: 1;
 }
 
-.loading-spinner {
-  width: 24px;
-  height: 24px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
+.thumbnail-loading-indicator, 
 .thumbnail-error-indicator {
   position: absolute;
   top: 0;
@@ -573,10 +591,17 @@ export default defineComponent({
   display: flex;
   justify-content: center;
   align-items: center;
+  z-index: 2;
+}
+
+.thumbnail-loading-indicator {
+  background-color: rgba(0, 0, 0, 0.2);
+}
+
+.thumbnail-error-indicator {
   background-color: rgba(0, 0, 0, 0.5);
   color: white;
   font-size: 14px;
-  z-index: 1;
   cursor: pointer;
 }
 
@@ -584,6 +609,15 @@ export default defineComponent({
   padding: 4px 8px;
   background-color: rgba(255, 0, 0, 0.5);
   border-radius: 4px;
+}
+
+.loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
 }
 
 @keyframes spin {

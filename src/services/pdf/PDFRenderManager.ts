@@ -1,13 +1,16 @@
 import * as pdfjsLib from 'pdfjs-dist'
 import { readFile } from '@tauri-apps/plugin-fs'
 import { PDFMetadataManager } from './PDFMetadataManager'
+import { ThumbnailCache } from '../thumbnail-cache'
 
 export class PDFRenderManager {
   private activePDFs: Map<string, any> = new Map() // 存储当前打开的PDF文档
   private metadataManager: PDFMetadataManager
+  private thumbnailCache: ThumbnailCache
 
   constructor(metadataManager: PDFMetadataManager) {
     this.metadataManager = metadataManager
+    this.thumbnailCache = ThumbnailCache.getInstance()
   }
 
   public async openPDF(id: string): Promise<void> {
@@ -295,26 +298,76 @@ export class PDFRenderManager {
   }
 
   public async renderThumbnail(id: string, pageNumber: number, canvas: HTMLCanvasElement, scale: number = 0.2): Promise<void> {
-    const pdf = this.activePDFs.get(id)
-    if (!pdf) {
-      throw new Error('PDF not loaded')
+    try {
+      // 首先检查缓存中是否已有该缩略图
+      const isCached = await this.thumbnailCache.hasThumbnail(id, pageNumber, scale)
+      
+      if (isCached) {
+        // 如果缓存中存在，直接加载缓存的图像
+        const imageUrl = await this.thumbnailCache.getThumbnail(id, pageNumber, scale)
+        
+        // 将图像绘制到canvas上
+        const img = new Image()
+        img.src = imageUrl
+        
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => {
+            // 设置canvas尺寸为图像尺寸
+            canvas.width = img.width
+            canvas.height = img.height
+            
+            // 绘制图像到canvas
+            const ctx = canvas.getContext('2d')
+            if (ctx) {
+              ctx.drawImage(img, 0, 0)
+              resolve()
+            } else {
+              reject(new Error('Failed to get canvas context'))
+            }
+          }
+          img.onerror = () => reject(new Error('Failed to load cached thumbnail'))
+        })
+        
+        return
+      }
+      
+      // 缓存中不存在，则正常渲染
+      const pdf = this.activePDFs.get(id)
+      if (!pdf) {
+        throw new Error('PDF not loaded')
+      }
+
+      const page = await pdf.getPage(pageNumber)
+      const viewport = page.getViewport({ scale, rotation: 0 })
+      
+      const context = canvas.getContext('2d')
+      if (!context) {
+        throw new Error('Failed to get canvas context')
+      }
+
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+
+      await page.render({
+        canvasContext: context,
+        viewport: viewport
+      }).promise
+      
+      // 渲染完成后，保存到缓存
+      try {
+        // 将canvas转换为二进制数据
+        const imageData = await this.thumbnailCache.canvasToBytes(canvas)
+        
+        // 保存到缓存
+        await this.thumbnailCache.saveThumbnail(id, pageNumber, imageData, scale)
+      } catch (cacheError) {
+        // 缓存失败不应阻止主流程，只记录错误
+        console.error('保存缩略图到缓存失败:', cacheError)
+      }
+    } catch (error) {
+      console.error(`渲染缩略图失败 (ID: ${id}, 页码: ${pageNumber}):`, error)
+      throw error
     }
-
-    const page = await pdf.getPage(pageNumber)
-    const viewport = page.getViewport({ scale, rotation: 0 })
-    
-    const context = canvas.getContext('2d')
-    if (!context) {
-      throw new Error('Failed to get canvas context')
-    }
-
-    canvas.width = viewport.width
-    canvas.height = viewport.height
-
-    await page.render({
-      canvasContext: context,
-      viewport: viewport
-    }).promise
   }
 
   public async closePDF(id: string): Promise<void> {
