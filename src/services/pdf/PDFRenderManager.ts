@@ -99,7 +99,7 @@ export class PDFRenderManager {
       container.appendChild(pagesContainer)
     }
 
-    // 初始加载时，只准备渲染区域的结构，而不是整个文档
+    // 初始加载时，准备文档结构
     if (isInitialLoad) {
       console.log(`初始加载，准备渲染区域`);
       // 清空容器
@@ -108,17 +108,30 @@ export class PDFRenderManager {
       // 获取文档总页数
       const pageCount = pdf.numPages;
       
-      // 创建虚拟滚动容器
-      const virtualScroller = document.createElement('div');
-      virtualScroller.className = 'virtual-scroller';
-      pagesContainer.appendChild(virtualScroller);
-      
       // 设置数据属性，记录文档总页数
       pagesContainer.setAttribute('data-total-pages', pageCount.toString());
+      
+      // 预先创建所有页面的占位符，以保持正确的文档高度
+      for (let i = 1; i <= pageCount; i++) {
+        const placeholder = document.createElement('div');
+        placeholder.className = 'pdf-page-placeholder';
+        placeholder.setAttribute('data-page', i.toString());
+        placeholder.setAttribute('data-placeholder', 'true');
+        
+        // 这里我们使用一个估计高度，后续会更新
+        // 这样可以避免布局抖动，提供更平滑的滚动体验
+        placeholder.style.height = '1000px'; // 初始估计高度
+        placeholder.style.width = '100%';
+        
+        pagesContainer.appendChild(placeholder);
+      }
     }
 
     const pageHeights: number[] = [];
     let totalHeight = 0;
+
+    // 记录渲染前的滚动位置
+    const scrollBefore = container.scrollTop;
 
     // 渲染指定范围的页面
     for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
@@ -136,10 +149,21 @@ export class PDFRenderManager {
       const page = await pdf.getPage(pageNum);
       const viewport = page.getViewport({ scale, rotation: 0 });
       
-      // 创建页面容器
-      const pageContainer = document.createElement('div');
-      pageContainer.className = 'pdf-page-container';
-      pageContainer.setAttribute('data-page', pageNum.toString());
+      // 查找该页的占位符或创建页面容器
+      let pageContainer = pagesContainer.querySelector(`div[data-page="${pageNum}"]`) as HTMLElement;
+      const isReplacingPlaceholder = !!pageContainer;
+      
+      if (!pageContainer) {
+        pageContainer = document.createElement('div');
+        pageContainer.className = 'pdf-page-container';
+        pageContainer.setAttribute('data-page', pageNum.toString());
+      } else {
+        // 清除占位符标记
+        pageContainer.removeAttribute('data-placeholder');
+        // 保留原始类名
+        pageContainer.className = 'pdf-page-container';
+      }
+      
       pageContainer.style.width = `${viewport.width}px`;
       pageContainer.style.height = `${viewport.height}px`;
       pageContainer.style.position = 'relative';
@@ -147,6 +171,12 @@ export class PDFRenderManager {
       // 创建画布
       const canvas = document.createElement('canvas');
       canvas.setAttribute('data-page', pageNum.toString());
+      
+      // 先清空容器内容再添加新的canvas
+      if (isReplacingPlaceholder) {
+        pageContainer.innerHTML = '';
+      }
+      
       pageContainer.appendChild(canvas);
       
       const context = canvas.getContext('2d', { alpha: false });
@@ -166,9 +196,6 @@ export class PDFRenderManager {
       // 设置画布缩放以匹配设备像素比
       context.scale(outputScale, outputScale);
 
-      // 记录渲染前位置
-      const scrollBefore = container.scrollTop;
-      
       // 渲染页面
       await page.render({
         canvasContext: context,
@@ -180,40 +207,58 @@ export class PDFRenderManager {
         cMapPacked: true,
       }).promise;
 
-      // 将页面添加到容器中
-      let inserted = false;
-      const allPages = pagesContainer.querySelectorAll('[data-page]');
-      for (let i = 0; i < allPages.length; i++) {
-        const currentPage = parseInt(allPages[i].getAttribute('data-page') || '0');
-        if (currentPage > pageNum) {
-          pagesContainer.insertBefore(pageContainer, allPages[i]);
-          inserted = true;
-          break;
+      // 如果不是替换占位符，将页面添加到容器中
+      if (!isReplacingPlaceholder) {
+        let inserted = false;
+        const allPages = pagesContainer.querySelectorAll('[data-page]');
+        for (let i = 0; i < allPages.length; i++) {
+          const currentPage = parseInt(allPages[i].getAttribute('data-page') || '0');
+          if (currentPage > pageNum) {
+            pagesContainer.insertBefore(pageContainer, allPages[i]);
+            inserted = true;
+            break;
+          }
+        }
+        
+        if (!inserted) {
+          pagesContainer.appendChild(pageContainer);
         }
       }
-      
-      if (!inserted) {
-        pagesContainer.appendChild(pageContainer);
-      }
 
-      // 处理滚动位置
-      if (!isInitialLoad && scrollPriority === 'exact') {
-        // 保持滚动位置不变
-        container.scrollTop = scrollBefore;
-      } else if (isInitialLoad && pageNum === startPage && scrollPriority === 'top') {
-        // 初始加载时，确保第一个渲染的页面在顶部
-        pageContainer.scrollIntoView({ block: 'start', behavior: 'auto' });
-      } else if (isInitialLoad && pageNum === Math.floor((startPage + endPage) / 2) && scrollPriority === 'center') {
-        // 初始加载时，确保中间页面居中
-        pageContainer.scrollIntoView({ block: 'center', behavior: 'auto' });
-      }
-      
       const height = pageContainer.clientHeight;
       pageHeights.push(height);
       totalHeight += height;
+      
+      // 更新所有相同页码的占位符高度，确保布局一致性
+      const otherPlaceholders = pagesContainer.querySelectorAll(`div[data-page="${pageNum}"][data-placeholder="true"]`);
+      otherPlaceholders.forEach((placeholder) => {
+        (placeholder as HTMLElement).style.height = `${height}px`;
+      });
     }
 
-    console.log(`渲染完成，共渲染 ${endPage - startPage + 1} 页`);
+    // 在渲染完成后处理滚动位置，分离渲染和滚动处理逻辑
+    if (scrollPriority === 'exact') {
+      // 保持滚动位置不变
+      container.scrollTop = scrollBefore;
+    } else if (isInitialLoad) {
+      // 根据滚动优先级设置滚动位置
+      if (scrollPriority === 'top') {
+        // 初始加载时，第一页在顶部
+        const firstPage = pagesContainer.querySelector(`[data-page="${startPage}"]`);
+        if (firstPage) {
+          firstPage.scrollIntoView({ block: 'start', behavior: 'auto' });
+        }
+      } else if (scrollPriority === 'center') {
+        // 初始加载时，中间页居中
+        const middlePage = pagesContainer.querySelector(`[data-page="${Math.floor((startPage + endPage) / 2)}"]`);
+        if (middlePage) {
+          middlePage.scrollIntoView({ block: 'center', behavior: 'auto' });
+        }
+      }
+      // 注意：不触发额外的滚动操作，避免触发onScroll事件
+    }
+
+    console.log(`渲染完成，共渲染 ${endPage - startPage + 1} 页，总高度 ${totalHeight}px`);
     return { pageHeights, totalHeight };
   }
 
@@ -229,11 +274,17 @@ export class PDFRenderManager {
     
     console.log(`渲染可视区域页面，可视区域: ${visibleStartPage}-${visibleEndPage}, 带缓冲区: ${startPage}-${endPage}`);
     
+    // 记录滚动位置
+    const scrollBefore = container.scrollTop;
+    
     // 渲染可视区域及缓冲区内的页面
     await this.renderPages(id, startPage, endPage, container, scale, { scrollPriority: 'exact' });
     
     // 卸载远离可视区域的页面以节省内存
     this.unloadDistantPages(container, visibleStartPage, visibleEndPage, bufferSize + 2);
+    
+    // 确保滚动位置不变
+    container.scrollTop = scrollBefore;
   }
   
   // 卸载远离可视区域的页面
@@ -252,16 +303,28 @@ export class PDFRenderManager {
       if (pageNum < minKeepPage || pageNum > maxKeepPage) {
         console.log(`卸载远离可视区域的页面 ${pageNum}`);
         
-        // 创建占位符替换canvas
+        // 获取画布所在的容器
+        const pageContainer = canvas.closest(`[data-page="${pageNum}"]`) as HTMLElement;
+        if (!pageContainer) continue;
+        
+        // 获取容器的尺寸信息以保持一致性
+        const containerWidth = pageContainer.style.width;
+        const containerHeight = pageContainer.style.height;
+        
+        // 创建占位符替换canvas，但保留原始尺寸
         const placeholder = document.createElement('div');
         placeholder.setAttribute('data-page', pageNum.toString());
         placeholder.setAttribute('data-placeholder', 'true');
-        placeholder.style.width = canvas.style.width;
-        placeholder.style.height = canvas.style.height;
+        placeholder.style.width = containerWidth;
+        placeholder.style.height = containerHeight;
         placeholder.style.backgroundColor = 'transparent';
         
-        // 替换
-        canvas.parentNode?.replaceChild(placeholder, canvas);
+        // 清空页面容器并添加占位符
+        pageContainer.innerHTML = '';
+        pageContainer.appendChild(placeholder);
+        
+        // 添加必要的数据属性
+        pageContainer.setAttribute('data-placeholder', 'true');
       }
     }
   }
