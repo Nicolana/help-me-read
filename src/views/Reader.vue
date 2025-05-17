@@ -171,21 +171,6 @@ export default defineComponent({
       );
     };
 
-    // 创建一个防抖版本的滚动处理函数
-    const debounceHandleScroll = debounce(handleScroll, 100);
-
-    // 防抖函数
-    function debounce(fn: Function, delay: number) {
-      let timer: number | null = null;
-      return function(...args: any[]) {
-        if (timer) clearTimeout(timer);
-        timer = window.setTimeout(() => {
-          fn.apply(this, args);
-          timer = null;
-        }, delay);
-      };
-    }
-
     const handleScroll = async (e: Event) => {
       if (!pdfContent.value || isLoading.value) return;
 
@@ -225,6 +210,23 @@ export default defineComponent({
         }
       }
     };
+
+    // 创建一个防抖版本的滚动处理函数
+    const debounceHandleScroll = debounce(handleScroll, 100);
+
+    // 防抖函数
+    function debounce(fn: Function, delay: number) {
+      let timer: number | null = null;
+      return function(...args: any[]) {
+        if (timer) clearTimeout(timer);
+        timer = window.setTimeout(() => {
+          fn.apply(this, args);
+          timer = null;
+        }, delay);
+      };
+    }
+
+    
 
     // 获取当前可见的页面
     const getVisiblePages = (): number[] => {
