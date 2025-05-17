@@ -55,6 +55,13 @@ import { useRoute, useRouter } from 'vue-router';
 import CustomScrollbar from '../components/CustomScrollbar.vue';
 import Thumbnails from '../components/Thumbnails.vue';
 
+// 为Window接口声明额外的属性
+declare global {
+  interface Window {
+    loadAdditionalPagesTimer: number | null;
+  }
+}
+
 // 为缩略图组件定义暴露方法的接口
 interface ThumbnailsExposed {
   show: () => void;
@@ -102,6 +109,9 @@ export default defineComponent({
     const initialRenderComplete = ref(false);
     // 新增：标记是否跳过下一次滚动事件处理
     const skipNextScrollEvent = ref(false);
+    const initDebounceTimer = ref<number | null>(null);
+    // 初始化loadAdditionalPagesTimer
+    window.loadAdditionalPagesTimer = null;
 
     // 计算内容高度和视口高度
     const contentHeight = computed(() => {
@@ -260,14 +270,17 @@ export default defineComponent({
                       preloadThumbnails();
                       initThumbnails();
                       
-                      // 在所有UI初始化完成后渲染额外页面
+                      // 在所有UI初始化完成后等待更长时间再渲染额外页面
                       setTimeout(() => {
-                        // 渲染额外的页面，增强滚动浏览体验
-                        loadAdditionalPages(estimatedCurrentPage);
-                        
-                        // 当所有内容准备就绪时，关闭恢复标记
+                        // 当所有内容准备就绪并且页面稳定后，关闭恢复标记
                         isRestoringProgress.value = false;
-                      }, 300);
+                        
+                        // 最后再延迟加载额外页面，确保主要体验已经稳定
+                        setTimeout(() => {
+                          // 渲染额外的页面，增强滚动浏览体验
+                          loadAdditionalPages(estimatedCurrentPage);
+                        }, 800); // 额外等待800ms再加载，减少抖动风险
+                      }, 500);
                     }, 200);
                   });
                 }, 100);
@@ -534,6 +547,12 @@ export default defineComponent({
       if (saveProgressDebounceTimer.value) {
         clearTimeout(saveProgressDebounceTimer.value);
       }
+      
+      // 清理后台渲染定时器
+      if (window.loadAdditionalPagesTimer) {
+        clearTimeout(window.loadAdditionalPagesTimer);
+        window.loadAdditionalPagesTimer = null;
+      }
     });
     
     // 在组件加载完成后调用此方法，默认展开缩略图
@@ -796,41 +815,50 @@ export default defineComponent({
     const loadAdditionalPages = async (centerPage: number) => {
       if (!initialRenderComplete.value || totalPages.value <= 3) return;
       
-      try {
-        // 加载更多页面，但使用较低优先级
-        const bufferRange = Math.min(5, Math.floor(totalPages.value / 4));
-        const startPage = Math.max(1, centerPage - bufferRange); 
-        const endPage = Math.min(totalPages.value, centerPage + bufferRange);
-        
-        // 分批次加载，避免UI阻塞
-        const batchSize = 3;
-        const batches = [];
-        
-        for (let i = startPage; i <= endPage; i += batchSize) {
-          const batchEnd = Math.min(endPage, i + batchSize - 1);
-          batches.push({start: i, end: batchEnd});
-        }
-        
-        // 逐批次加载
-        for (const batch of batches) {
-          // 使用低优先级延迟，避免阻塞用户交互
-          await new Promise(resolve => setTimeout(resolve, 50));
-          if (pagesContainer.value) {
-            await pdfService.renderPages(
-              fileId.value,
-              batch.start,
-              batch.end,
-              pagesContainer.value,
-              zoom.value,
-              { scrollPriority: 'exact' }
-            );
-          }
-        }
-        
-        console.log(`后台加载了额外页面，范围 ${startPage}-${endPage}`);
-      } catch (error) {
-        console.error('加载额外页面失败:', error);
+      // 添加延迟执行的防抖处理
+      if (window.loadAdditionalPagesTimer) {
+        clearTimeout(window.loadAdditionalPagesTimer);
       }
+      
+      window.loadAdditionalPagesTimer = window.setTimeout(async () => {
+        try {
+          // 保持更窄的渲染范围，减少抖动
+          const bufferRange = Math.min(3, Math.floor(totalPages.value / 8));
+          const startPage = Math.max(1, centerPage - bufferRange); 
+          const endPage = Math.min(totalPages.value, centerPage + bufferRange);
+          
+          console.log(`开始后台加载额外页面，范围 ${startPage}-${endPage}`);
+          
+          // 分批次加载，避免UI阻塞，并增加每批次间的延迟
+          const batchSize = 2;
+          const batches = [];
+          
+          for (let i = startPage; i <= endPage; i += batchSize) {
+            const batchEnd = Math.min(endPage, i + batchSize - 1);
+            batches.push({start: i, end: batchEnd});
+          }
+          
+          // 逐批次加载，使用更长的延迟
+          for (const batch of batches) {
+            // 使用更长延迟，避免阻塞用户交互和引起抖动
+            await new Promise(resolve => setTimeout(resolve, 100));
+            if (pagesContainer.value) {
+              await pdfService.renderPages(
+                fileId.value,
+                batch.start,
+                batch.end,
+                pagesContainer.value,
+                zoom.value,
+                { scrollPriority: 'exact' }
+              );
+            }
+          }
+          
+          console.log(`后台加载了额外页面，范围 ${startPage}-${endPage}`);
+        } catch (error) {
+          console.error('加载额外页面失败:', error);
+        }
+      }, 500); // 延迟500ms开始加载额外页面，确保页面稳定
     };
 
     return {
