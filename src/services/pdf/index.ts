@@ -127,6 +127,10 @@ export class PDFService {
     return this.renderManager.getThumbnail(id, pageNumber)
   }
 
+  public async renderThumbnail(id: string, pageNumber: number, canvas: HTMLCanvasElement, scale: number = 0.2): Promise<void> {
+    return this.renderManager.renderThumbnail(id, pageNumber, canvas, scale)
+  }
+
   public async closePDF(id: string): Promise<void> {
     await this.ensureInitialized()
     return this.renderManager.closePDF(id)

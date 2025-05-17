@@ -6,6 +6,10 @@
           <i class="fas fa-times"></i>
           关闭
         </button>
+        <button class="thumbnail-btn" @click="toggleThumbnails">
+          <i class="fas fa-th-list"></i>
+          缩略图
+        </button>
       </div>
       <div class="toolbar-center">
         <div class="zoom-control">
@@ -24,6 +28,18 @@
       </div>
     </div>
     <div class="pdf-content-wrapper">
+      <div class="thumbnails-panel" :class="{ 'thumbnails-panel-visible': showThumbnails }">
+        <div class="thumbnails-container" ref="thumbnailsContainer">
+          <div v-for="pageNum in totalPages" 
+               :key="pageNum" 
+               class="thumbnail-item"
+               :class="{ 'thumbnail-active': pageNum === currentPage }"
+               @click="jumpToPage(pageNum)">
+            <div class="thumbnail-page-number">{{ pageNum }}</div>
+            <canvas :data-page="pageNum"></canvas>
+          </div>
+        </div>
+      </div>
       <div class="pdf-content" ref="pdfContent" @scroll="handleScroll">
         <div class="pages-container" ref="pagesContainer"></div>
       </div>
@@ -62,6 +78,8 @@ export default defineComponent({
     const isLoading = ref(false);
     const scrollTop = ref(0);
     const saveProgressDebounceTimer = ref<number | null>(null);
+    const showThumbnails = ref(false);
+    const thumbnailsContainer = ref<HTMLElement | null>(null);
 
     // 计算内容高度和视口高度
     const contentHeight = computed(() => {
@@ -150,6 +168,11 @@ export default defineComponent({
         // 添加滚动监听器，实现虚拟滚动
         if (pdfContent.value) {
           pdfContent.value.addEventListener('scroll', debounceHandleScroll);
+        }
+
+        // 在PDF加载完成后渲染缩略图
+        if (showThumbnails.value) {
+          await renderThumbnails();
         }
       } catch (error) {
         console.error('加载PDF文件失败:', error);
@@ -313,6 +336,55 @@ export default defineComponent({
       router.push('/');
     };
 
+    // 渲染缩略图
+    const renderThumbnails = async () => {
+      if (!fileId.value || !showThumbnails.value || !thumbnailsContainer.value) return;
+
+      try {
+        const thumbnailScale = 0.2; // 缩略图缩放比例
+        const canvases = thumbnailsContainer.value.querySelectorAll('canvas');
+        
+        for (const canvas of canvases) {
+          const pageNum = parseInt(canvas.getAttribute('data-page') || '0');
+          if (pageNum > 0) {
+            await pdfService.renderThumbnail(fileId.value, pageNum, canvas as HTMLCanvasElement, thumbnailScale);
+          }
+        }
+      } catch (error) {
+        console.error('渲染缩略图失败:', error);
+      }
+    };
+
+    // 切换缩略图面板显示状态
+    const toggleThumbnails = () => {
+      console.log('toggleThumbnails', showThumbnails.value);
+      showThumbnails.value = !showThumbnails.value;
+      if (showThumbnails.value) {
+        renderThumbnails();
+      }
+    };
+
+    // 跳转到指定页面
+    const jumpToPage = async (pageNum: number) => {
+      if (!pdfContent.value || !pagesContainer.value) return;
+      
+      const pageElement = pagesContainer.value.querySelector(`[data-page="${pageNum}"]`);
+      if (pageElement) {
+        pageElement.scrollIntoView({ behavior: 'smooth' });
+        currentPage.value = pageNum;
+      }
+    };
+
+    // 监听当前页面变化，更新缩略图选中状态
+    watch(currentPage, (newPage) => {
+      if (showThumbnails.value) {
+        const thumbnailElement = thumbnailsContainer.value?.querySelector(`[data-page="${newPage}"]`);
+        if (thumbnailElement) {
+          thumbnailElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+    });
+
     return {
       zoom,
       currentPage,
@@ -324,7 +396,11 @@ export default defineComponent({
       scrollTop,
       handleZoom,
       handleScroll,
-      handleClose
+      handleClose,
+      showThumbnails,
+      thumbnailsContainer,
+      toggleThumbnails,
+      jumpToPage,
     };
   }
 });
@@ -495,6 +571,70 @@ export default defineComponent({
 }
 
 .close-btn:hover {
+  background-color: #353535;
+}
+
+.thumbnails-panel {
+  width: 0;
+  background-color: #2a2a2a;
+  transition: width 0.3s ease;
+  overflow: hidden;
+  border-right: 1px solid #3a3a3a;
+}
+
+.thumbnails-panel-visible {
+  width: 200px;
+}
+
+.thumbnails-container {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.thumbnail-item {
+  position: relative;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.thumbnail-item:hover {
+  border-color: #666;
+}
+
+.thumbnail-active {
+  border-color: #007bff;
+}
+
+.thumbnail-page-number {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  background-color: rgba(0, 0, 0, 0.5);
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.thumbnail-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 4px;
+  color: white;
+  cursor: pointer;
+  font-size: 14px;
+  background: transparent;
+}
+
+.thumbnail-btn:hover {
   background-color: #353535;
 }
 </style>

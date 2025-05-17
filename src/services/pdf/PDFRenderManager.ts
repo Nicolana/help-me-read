@@ -294,6 +294,29 @@ export class PDFRenderManager {
     return canvas.toDataURL('image/png')
   }
 
+  public async renderThumbnail(id: string, pageNumber: number, canvas: HTMLCanvasElement, scale: number = 0.2): Promise<void> {
+    const pdf = this.activePDFs.get(id)
+    if (!pdf) {
+      throw new Error('PDF not loaded')
+    }
+
+    const page = await pdf.getPage(pageNumber)
+    const viewport = page.getViewport({ scale, rotation: 0 })
+    
+    const context = canvas.getContext('2d')
+    if (!context) {
+      throw new Error('Failed to get canvas context')
+    }
+
+    canvas.width = viewport.width
+    canvas.height = viewport.height
+
+    await page.render({
+      canvasContext: context,
+      viewport: viewport
+    }).promise
+  }
+
   public async closePDF(id: string): Promise<void> {
     const pdf = this.activePDFs.get(id)
     if (pdf) {
