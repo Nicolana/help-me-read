@@ -55,6 +55,16 @@ import { useRoute, useRouter } from 'vue-router';
 import CustomScrollbar from '../components/CustomScrollbar.vue';
 import Thumbnails from '../components/Thumbnails.vue';
 
+// 为缩略图组件定义暴露方法的接口
+interface ThumbnailsExposed {
+  show: () => void;
+  hide: () => void;
+  toggle: () => void;
+  loadThumbnail: (pageNum: number) => Promise<void>;
+  updateCurrentPage: (pageNum: number) => void;
+  thumbnailsContainer: HTMLElement | null;
+}
+
 export default defineComponent({
   components: {
     CustomScrollbar,
@@ -76,7 +86,7 @@ export default defineComponent({
     const scrollTop = ref(0);
     const saveProgressDebounceTimer = ref<number | null>(null);
     const showThumbnails = ref(false);
-    const thumbnailsRef = ref<InstanceType<typeof Thumbnails> | null>(null);
+    const thumbnailsRef = ref<ThumbnailsExposed | null>(null);
 
     // 计算内容高度和视口高度
     const contentHeight = computed(() => {
@@ -166,6 +176,9 @@ export default defineComponent({
         if (pdfContent.value) {
           pdfContent.value.addEventListener('scroll', debounceHandleScroll);
         }
+        
+        // 主动预加载前几页的缩略图以提高用户体验
+        preloadThumbnails();
       } catch (error) {
         console.error('加载PDF文件失败:', error);
       }
@@ -232,7 +245,7 @@ export default defineComponent({
     // 防抖函数
     function debounce(fn: Function, delay: number) {
       let timer: number | null = null;
-      return function(...args: any[]) {
+      return function(this: any, ...args: any[]) {
         if (timer) clearTimeout(timer);
         timer = window.setTimeout(() => {
           fn.apply(this, args);
@@ -241,14 +254,14 @@ export default defineComponent({
       };
     }
 
-    
-
     // 获取当前可见的页面
     const getVisiblePages = (): number[] => {
       if (!pdfContent.value || !pagesContainer.value) return [];
       
       const result: number[] = [];
-      const { scrollTop, clientHeight } = pdfContent.value;
+      const containerRect = pdfContent.value.getBoundingClientRect();
+      const containerTop = containerRect.top;
+      const containerBottom = containerTop + pdfContent.value.clientHeight;
       const pageElements = pagesContainer.value.querySelectorAll('[data-page]');
       
       for (let i = 0; i < pageElements.length; i++) {
@@ -259,8 +272,6 @@ export default defineComponent({
         // 判断页面是否在可视区域内
         const elementTop = rect.top;
         const elementBottom = rect.bottom;
-        const containerTop = pdfContent.value.getBoundingClientRect().top;
-        const containerBottom = containerTop + clientHeight;
         
         // 如果元素与容器可视区域有交叉，则认为是可见的
         if (elementBottom > containerTop && elementTop < containerBottom) {
@@ -331,8 +342,59 @@ export default defineComponent({
     const toggleThumbnails = () => {
       showThumbnails.value = !showThumbnails.value;
       console.log('toggleThumbnails', showThumbnails.value);
-      if (showThumbnails.value && thumbnailsRef.value) {
-        thumbnailsRef.value?.toggle();
+      if (thumbnailsRef.value) {
+        try {
+          if (showThumbnails.value) {
+            thumbnailsRef.value.show();
+            // 短暂延迟后确保当前页面的缩略图可见
+            setTimeout(() => {
+              if (thumbnailsRef.value) {
+                thumbnailsRef.value.updateCurrentPage(currentPage.value);
+              }
+            }, 100);
+          } else {
+            thumbnailsRef.value.hide();
+          }
+        } catch (error) {
+          console.error('操作缩略图组件失败:', error);
+        }
+      }
+    };
+
+    // 预加载缩略图
+    const preloadThumbnails = async () => {
+      if (!fileId.value || totalPages.value === 0) return;
+      
+      console.log('开始预加载缩略图');
+      
+      // 不依赖thumbnailsRef，直接通过pdfService加载
+      try {
+        // 确保第一页和当前页的缩略图被加载
+        const pagesToPreload = [1];
+        if (currentPage.value > 1) {
+          pagesToPreload.push(currentPage.value);
+        }
+        
+        // 添加当前页附近的页面
+        const buffer = 2;
+        for (let i = Math.max(1, currentPage.value - buffer); i <= Math.min(totalPages.value, currentPage.value + buffer); i++) {
+          if (!pagesToPreload.includes(i)) {
+            pagesToPreload.push(i);
+          }
+        }
+        
+        // 预加载缩略图，但不阻塞UI
+        for (const page of pagesToPreload) {
+          try {
+            await pdfService.renderThumbnail(fileId.value, page, 0.2);
+          } catch (error) {
+            console.error(`预加载第 ${page} 页缩略图失败:`, error);
+          }
+        }
+        
+        console.log(`预加载了 ${pagesToPreload.length} 个缩略图`);
+      } catch (error) {
+        console.error('预加载缩略图失败:', error);
       }
     };
 
@@ -349,8 +411,19 @@ export default defineComponent({
 
     // 监听当前页面变化，更新缩略图选中状态
     watch(currentPage, (newPage) => {
-      if (showThumbnails.value && thumbnailsRef.value) {
-        thumbnailsRef.value.updateCurrentPage(newPage);
+      if (thumbnailsRef.value) {
+        try {
+          thumbnailsRef.value.updateCurrentPage(newPage);
+          
+          // 如果缩略图面板打开，加载当前页的缩略图
+          if (showThumbnails.value) {
+            // 直接使用pdfService渲染当前页的缩略图，不依赖组件的loadThumbnail方法
+            pdfService.renderThumbnail(fileId.value, newPage, 0.2)
+              .catch(error => console.error(`渲染当前页(${newPage})缩略图失败:`, error));
+          }
+        } catch (error) {
+          console.error('更新缩略图当前页失败:', error);
+        }
       }
     });
 

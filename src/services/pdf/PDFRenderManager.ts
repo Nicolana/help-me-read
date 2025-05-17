@@ -314,26 +314,52 @@ export class PDFRenderManager {
       // 缓存中不存在，则渲染并保存
       const pdf = this.activePDFs.get(id)
       if (!pdf) {
-        throw new Error('PDF not loaded')
+        // 尝试加载PDF
+        try {
+          await this.openPDF(id)
+          return this.renderThumbnail(id, pageNumber, scale)
+        } catch (err) {
+          console.error('自动加载PDF失败:', err)
+          throw new Error('PDF not loaded')
+        }
       }
 
       const page = await pdf.getPage(pageNumber)
-      const viewport = page.getViewport({ scale, rotation: 0 })
+      
+      // 使用较低的scale以提高渲染性能，最小值为0.1
+      const effectiveScale = Math.max(0.1, scale)  
+      const viewport = page.getViewport({ scale: effectiveScale, rotation: 0 })
       
       // 创建临时canvas进行渲染
       const canvas = document.createElement('canvas')
-      canvas.width = viewport.width
-      canvas.height = viewport.height
       
-      const context = canvas.getContext('2d')
+      // 限制最大尺寸以提高性能
+      const maxDimension = 200
+      const widthScale = maxDimension / viewport.width
+      const heightScale = maxDimension / viewport.height
+      const dimensionScale = Math.min(1, Math.min(widthScale, heightScale))
+      
+      canvas.width = Math.floor(viewport.width * dimensionScale)
+      canvas.height = Math.floor(viewport.height * dimensionScale)
+      
+      const context = canvas.getContext('2d', { alpha: false })
       if (!context) {
         throw new Error('Failed to get canvas context')
       }
+      
+      if (dimensionScale < 1) {
+        context.scale(dimensionScale, dimensionScale)
+      }
 
-      // 渲染到canvas
+      // 使用较低质量设置渲染到canvas，提高性能
       await page.render({
         canvasContext: context,
-        viewport: viewport
+        viewport: viewport,
+        intent: 'display',
+        enableWebGL: true,
+        renderInteractiveForms: false,
+        canvasFactory: undefined,
+        transform: undefined
       }).promise
       
       try {
@@ -348,7 +374,7 @@ export class PDFRenderManager {
       } catch (cacheError) {
         // 缓存失败，直接返回canvas的dataURL
         console.error('保存缩略图到缓存失败，返回临时图像:', cacheError)
-        return canvas.toDataURL('image/png')
+        return canvas.toDataURL('image/jpeg', 0.8) // 使用JPEG格式和较低质量
       }
     } catch (error) {
       console.error(`渲染缩略图失败 (ID: ${id}, 页码: ${pageNumber}):`, error)

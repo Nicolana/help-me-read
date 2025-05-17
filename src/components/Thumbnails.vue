@@ -116,14 +116,14 @@ export default defineComponent({
     const renderPromises = ref<Map<number, Promise<void>>>(new Map());
     
     // 缩略图大小设置
-    const itemHeight = 150;
-    const itemGap = 10;
-    const bufferSize = 3; // 增加缓冲区大小，提升滚动体验
-    const maxConcurrentRenders = 3; // 最大并行渲染数量
-    const maxCachedPages = 100; // 最大缓存页数
+    const itemHeight = 150; // 进一步减小缩略图高度，让每屏可显示更多项目
+    const itemGap = 5; // 进一步减小间距
+    const bufferSize = 20; // 大幅增加缓冲区大小
+    const maxConcurrentRenders = 10; // 增加并行渲染数量
+    const maxCachedPages = 150; // 增加最大缓存页数
     
     // 节流相关
-    const scrollThrottleDelay = 100; // 滚动节流延迟(ms)
+    const scrollThrottleDelay = 50; // 减少滚动节流延迟，提高响应速度
     let throttleTimer: number | null = null;
     let lastScrollTime = 0;
     
@@ -139,7 +139,10 @@ export default defineComponent({
 
     // 计算可见项目的数量
     const visibleItemCount = computed(() => {
-      return Math.ceil(viewportHeight.value / (itemHeight + itemGap)) + bufferSize * 2;
+      // 根据容器高度计算可见项目数，加上两倍缓冲区大小
+      const count = Math.ceil(viewportHeight.value / (itemHeight + itemGap)) + bufferSize * 2;
+      console.log(`计算可见项目数: 视口高度=${viewportHeight.value}px, 每项高度=${itemHeight + itemGap}px, 可见项目数=${count}`);
+      return count;
     });
 
     // 计算可见项目的索引范围
@@ -147,9 +150,15 @@ export default defineComponent({
       if (!thumbnailsContainer.value) return { start: 0, end: 0 };
 
       const start = Math.floor(scrollTop.value / (itemHeight + itemGap));
+      // 确保至少显示一定数量的项目，即使滚动位置很小
+      const minVisibleItems = Math.min(20, props.totalPages); 
       const bufferedStart = Math.max(0, start - bufferSize);
-      const bufferedEnd = Math.min(props.totalPages - 1, start + visibleItemCount.value + bufferSize);
+      const bufferedEnd = Math.min(
+        props.totalPages - 1, 
+        Math.max(start + visibleItemCount.value, bufferedStart + minVisibleItems)
+      );
 
+      console.log(`可见范围: start=${bufferedStart}, end=${bufferedEnd}, 总项目数=${bufferedEnd - bufferedStart + 1}`);
       return {
         start: bufferedStart,
         end: bufferedEnd
@@ -170,6 +179,7 @@ export default defineComponent({
         });
       }
 
+      console.log(`创建的DOM项目数: ${items.length}`);
       return items;
     });
 
@@ -369,10 +379,10 @@ export default defineComponent({
         renderPromises.value.clear();
         
         if (visible.value) {
-          console.log('visible', visible.value);
+          console.log('文件ID已变更，重新加载缩略图');
           // 短暂延迟，确保DOM已更新
           setTimeout(() => {
-            queueRenderVisibleThumbnails();
+            initThumbnails();
           }, 50);
         }
       }
@@ -381,11 +391,14 @@ export default defineComponent({
     // 监听 visible 变化，当显示时渲染缩略图
     watch(visible, (newVisible) => {
       if (newVisible) {
-        console.log('visible', newVisible);
-        // 短暂延迟，确保DOM已更新
+        console.log('缩略图面板已显示，加载缩略图');
+        // 确保DOM已完全更新并且正确测量尺寸
         setTimeout(() => {
-          queueRenderVisibleThumbnails();
-        }, 50);
+          // 滚动到当前页面
+          updateCurrentPage(props.currentPage);
+          // 初始化缩略图
+          initThumbnails();
+        }, 100);
       }
     });
 
@@ -441,6 +454,67 @@ export default defineComponent({
       thumbnailsContainer
     });
 
+    // 初始化时立即尝试加载第一屏缩略图
+    const initThumbnails = () => {
+      if (!props.fileId || !visible.value) return;
+      
+      console.log('initThumbnails: 开始初始化缩略图');
+      
+      // 确保加载前几页和当前页附近的缩略图
+      const initialPages: number[] = [];
+      
+      // 加载前15页
+      for (let i = 1; i <= Math.min(15, props.totalPages); i++) {
+        initialPages.push(i);
+      }
+      
+      // 加载当前页和周围页面
+      if (props.currentPage > 5) {
+        for (let i = Math.max(1, props.currentPage - 10); i <= Math.min(props.totalPages, props.currentPage + 10); i++) {
+          if (!initialPages.includes(i)) {
+            initialPages.push(i);
+          }
+        }
+      }
+      
+      // 如果文档很大，再加载最后几页的缩略图
+      if (props.totalPages > 30) {
+        for (let i = Math.max(props.totalPages - 5, initialPages[initialPages.length - 1] + 1); i <= props.totalPages; i++) {
+          initialPages.push(i);
+        }
+      }
+      
+      // 按与当前页的接近程度排序
+      initialPages.sort((a, b) => Math.abs(a - props.currentPage) - Math.abs(b - props.currentPage));
+      
+      // 开始加载
+      console.log(`初始化加载 ${initialPages.length} 页缩略图，当前页: ${props.currentPage}`);
+      
+      // 使用Promise.all和分批处理来控制并行加载
+      const batchSize = maxConcurrentRenders;
+      const processBatch = async (startIdx: number) => {
+        const batch = initialPages.slice(startIdx, startIdx + batchSize);
+        if (batch.length === 0) return;
+        
+        const promises = batch.map(pageNum => {
+          if (!thumbnails.value[pageNum] && !loadingPages.value.includes(pageNum) && !renderPromises.value.has(pageNum)) {
+            return loadThumbnail(pageNum);
+          }
+          return Promise.resolve();
+        });
+        
+        await Promise.all(promises);
+        
+        // 处理下一批
+        if (startIdx + batchSize < initialPages.length) {
+          processBatch(startIdx + batchSize);
+        }
+      };
+      
+      // 开始处理第一批
+      processBatch(0);
+    };
+
     return {
       thumbnailsContainer,
       totalContentHeight,
@@ -474,7 +548,7 @@ export default defineComponent({
 }
 
 .thumbnails-container {
-  padding: 10px;
+  padding: 5px; /* 减小内边距 */
   height: 100%;
   overflow-y: scroll;
   position: relative;
@@ -500,6 +574,8 @@ export default defineComponent({
   transition: all 0.2s ease;
   overflow: hidden;
   border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  background-color: #333;
 }
 
 .thumbnail-item:hover {
@@ -537,6 +613,7 @@ export default defineComponent({
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: 3px;
 }
 
 .thumbnail-loading-indicator, 
