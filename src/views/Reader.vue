@@ -28,18 +28,12 @@
       </div>
     </div>
     <div class="pdf-content-wrapper">
-      <div class="thumbnails-panel" :class="{ 'thumbnails-panel-visible': showThumbnails }">
-        <div class="thumbnails-container" ref="thumbnailsContainer">
-          <div v-for="pageNum in totalPages" 
-               :key="pageNum" 
-               class="thumbnail-item"
-               :class="{ 'thumbnail-active': pageNum === currentPage }"
-               @click="jumpToPage(pageNum)">
-            <div class="thumbnail-page-number">{{ pageNum }}</div>
-            <canvas :data-page="pageNum"></canvas>
-          </div>
-        </div>
-      </div>
+      <Thumbnails
+        v-if="showThumbnails"
+        :total-pages="totalPages"
+        :current-page="currentPage"
+        @select-page="jumpToPage"
+      />
       <div class="pdf-content" ref="pdfContent" @scroll="handleScroll">
         <div class="pages-container" ref="pagesContainer"></div>
       </div>
@@ -58,10 +52,12 @@ import { defineComponent, ref, onMounted, onUnmounted, computed, watch } from 'v
 import { PDFService } from '../services/pdf';
 import { useRoute, useRouter } from 'vue-router';
 import CustomScrollbar from '../components/CustomScrollbar.vue';
+import Thumbnails from '../components/Thumbnails.vue';
 
 export default defineComponent({
   components: {
-    CustomScrollbar
+    CustomScrollbar,
+    Thumbnails
   },
 
   setup() {
@@ -410,43 +406,36 @@ export default defineComponent({
 .pdf-reader {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  background-color: #3a3a3a;
+  height: 100vh;
+  background-color: #1a1a1a;
+  color: #fff;
 }
 
 .pdf-content-wrapper {
   flex: 1;
   display: flex;
   position: relative;
-  overflow: hidden !important;
+  overflow: hidden;
 }
 
 .pdf-content {
   flex: 1;
-  overflow-y: scroll;
-  padding: 20px;
-  /* 隐藏默认滚动条 - 所有浏览器 */
-  scrollbar-width: none !important; /* Firefox */
-  -ms-overflow-style: none !important; /* IE and Edge */
-  -webkit-overflow-scrolling: touch;
+  overflow-y: auto;
+  position: relative;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
-/* Chrome, Safari, Opera */
-.pdf-content::-webkit-scrollbar,
-.pdf-content::-webkit-scrollbar-thumb,
-.pdf-content::-webkit-scrollbar-track {
-  width: 0 !important;
-  height: 0 !important;
-  background-color: transparent !important;
-  display: none !important;
+.pdf-content::-webkit-scrollbar {
+  display: none;
 }
 
 .pages-container {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  overflow: visible !important;
+  padding: 20px;
+  gap: 20px;
 }
 
 .pages-container canvas {

@@ -22,6 +22,6 @@
 
     "types": ["@tauri-apps/api"]
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue", "src/components/PDFViewer.vue "],
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue", "src/components/PDFViewer.vue"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
