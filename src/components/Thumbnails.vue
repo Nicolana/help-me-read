@@ -364,8 +364,30 @@ export default defineComponent({
 
     // 更新当前页面并滚动到该页面
     const updateCurrentPage = (pageNum: number) => {
-      const offsetY = (pageNum - 1) * (itemHeight + itemGap);
-      scrollTop.value = offsetY - (viewportHeight.value - itemHeight) / 2;
+      if (!thumbnailsContainer.value) return;
+      
+      const itemHeight = 150; // 与 itemHeight 常量保持一致
+      const itemGap = 5; // 与 itemGap 常量保持一致
+      const containerHeight = thumbnailsContainer.value.clientHeight;
+      const itemTotalHeight = itemHeight + itemGap;
+      
+      // 计算目标页面的位置
+      const targetOffset = (pageNum - 1) * itemTotalHeight;
+      
+      // 计算当前可视区域的中心位置
+      const currentCenter = thumbnailsContainer.value.scrollTop + (containerHeight / 2);
+      
+      // 计算目标页面到可视区域中心的距离
+      const distanceToCenter = targetOffset - (currentCenter - itemTotalHeight / 2);
+      
+      // 如果目标页面不在可视区域内，或者距离中心太远，则滚动到合适位置
+      if (Math.abs(distanceToCenter) > containerHeight / 4) {
+        const newScrollTop = Math.max(0, targetOffset - (containerHeight / 2) + (itemTotalHeight / 2));
+        thumbnailsContainer.value.scrollTo({
+          top: newScrollTop,
+          behavior: 'smooth'
+        });
+      }
     };
 
     // 监听 fileId 变化，重新渲染缩略图
@@ -390,8 +412,9 @@ export default defineComponent({
 
     // 监听 visible 变化，当显示时渲染缩略图
     watch(visible, (newVisible) => {
+      console.log('DEBUG: visible', newVisible);
       if (newVisible) {
-        console.log('缩略图面板已显示，加载缩略图');
+        console.log('DEBUG: 缩略图面板已显示，加载缩略图');
         // 确保DOM已完全更新并且正确测量尺寸
         setTimeout(() => {
           // 滚动到当前页面

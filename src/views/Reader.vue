@@ -423,8 +423,17 @@ export default defineComponent({
       
       const pageElement = pagesContainer.value.querySelector(`[data-page="${pageNum}"]`);
       if (pageElement) {
+        // 使用平滑滚动
         pageElement.scrollIntoView({ behavior: 'smooth' });
         currentPage.value = pageNum;
+        
+        // 确保缩略图面板中的当前页面可见
+        if (thumbnailsRef.value) {
+          // 使用 requestAnimationFrame 确保在滚动动画开始后更新缩略图位置
+          requestAnimationFrame(() => {
+            thumbnailsRef.value?.updateCurrentPage(pageNum);
+          });
+        }
       }
     };
 
@@ -432,11 +441,14 @@ export default defineComponent({
     watch(currentPage, (newPage) => {
       if (thumbnailsRef.value) {
         try {
-          thumbnailsRef.value.updateCurrentPage(newPage);
+          // 使用 requestAnimationFrame 确保在 DOM 更新后更新缩略图位置
+          requestAnimationFrame(() => {
+            thumbnailsRef.value?.updateCurrentPage(newPage);
+          });
           
           // 如果缩略图面板打开，加载当前页的缩略图
           if (showThumbnails.value) {
-            // 直接使用pdfService渲染当前页的缩略图，不依赖组件的loadThumbnail方法
+            // 直接使用 pdfService 渲染当前页的缩略图，不依赖组件的 loadThumbnail 方法
             pdfService.renderThumbnail(fileId.value, newPage, 0.2)
               .catch(error => console.error(`渲染当前页(${newPage})缩略图失败:`, error));
           }
