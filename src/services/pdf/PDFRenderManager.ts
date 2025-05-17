@@ -77,11 +77,38 @@ export class PDFRenderManager {
     return page.getViewport({ scale, rotation: 0 })
   }
 
-  public async renderPages(id: string, startPage: number, endPage: number, container: HTMLElement, scale: number = 1, options: { isInitialLoad?: boolean, scrollPriority?: 'top' | 'center' | 'exact' } = {}): Promise<{ pageHeights: number[], totalHeight: number }> {
-    const pdf = this.activePDFs.get(id)
+  // 辅助方法：确保PDF已加载
+  private async ensurePDFLoaded(id: string): Promise<any> {
+    let pdf = this.activePDFs.get(id);
+    
     if (!pdf) {
-      throw new Error('PDF not loaded')
+      try {
+        const metadata = this.metadataManager.getPDFMetadata(id);
+        if (!metadata) {
+          throw new Error('PDF metadata not found');
+        }
+        
+        console.log(`PDF ${id} 尚未加载，尝试自动加载`);
+        
+        const pdfData = await readFile(metadata.path);
+        pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+        this.activePDFs.set(id, pdf);
+        
+        // 更新元数据中的页数
+        const pageCount = pdf.numPages;
+        await this.metadataManager.updatePageCount(id, pageCount);
+      } catch (error) {
+        console.error(`自动加载PDF ${id} 失败:`, error);
+        throw new Error('PDF not loaded');
+      }
     }
+    
+    return pdf;
+  }
+
+  public async renderPages(id: string, startPage: number, endPage: number, container: HTMLElement, scale: number = 1, options: { isInitialLoad?: boolean, scrollPriority?: 'top' | 'center' | 'exact' } = {}): Promise<{ pageHeights: number[], totalHeight: number }> {
+    // 使用辅助方法确保PDF已加载
+    const pdf = await this.ensurePDFLoaded(id);
 
     const isInitialLoad = options.isInitialLoad ?? false;
     const scrollPriority = options.scrollPriority ?? 'center';
@@ -111,20 +138,30 @@ export class PDFRenderManager {
       // 设置数据属性，记录文档总页数
       pagesContainer.setAttribute('data-total-pages', pageCount.toString());
       
-      // 预先创建所有页面的占位符，以保持正确的文档高度
-      for (let i = 1; i <= pageCount; i++) {
+      // 性能优化：只创建可见区域附近和预计会使用的页面占位符
+      // 这样可以减少初始DOM操作，加速首次加载
+      const visiblePagesCount = Math.min(20, pageCount); // 限制初始创建的占位符数量
+      const startPlaceholder = Math.max(1, startPage - 5);
+      const endPlaceholder = Math.min(pageCount, startPage + visiblePagesCount);
+      
+      // 使用documentFragment一次性添加DOM元素，减少重排
+      const fragment = document.createDocumentFragment();
+      
+      for (let i = startPlaceholder; i <= endPlaceholder; i++) {
         const placeholder = document.createElement('div');
         placeholder.className = 'pdf-page-placeholder';
         placeholder.setAttribute('data-page', i.toString());
         placeholder.setAttribute('data-placeholder', 'true');
         
-        // 这里我们使用一个估计高度，后续会更新
-        // 这样可以避免布局抖动，提供更平滑的滚动体验
-        placeholder.style.height = '1000px'; // 初始估计高度
+        // 使用更合理的初始估计高度，基于A4比例和缩放因子
+        const estimatedHeight = Math.round(842 * scale); // A4高度约为842pt
+        placeholder.style.height = `${estimatedHeight}px`;
         placeholder.style.width = '100%';
         
-        pagesContainer.appendChild(placeholder);
+        fragment.appendChild(placeholder);
       }
+      
+      pagesContainer.appendChild(fragment);
     }
 
     const pageHeights: number[] = [];
@@ -133,7 +170,11 @@ export class PDFRenderManager {
     // 记录渲染前的滚动位置
     const scrollBefore = container.scrollTop;
 
-    // 渲染指定范围的页面
+    // 性能优化：使用Promise.all并行渲染多个页面
+    const renderPromises = [];
+    const renderedPageData = new Map(); // 存储页面渲染数据
+
+    // 准备所有页面的渲染任务
     for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
       // 检查页面是否已经渲染
       const existingCanvas = pagesContainer.querySelector(`canvas[data-page="${pageNum}"]`);
@@ -145,68 +186,102 @@ export class PDFRenderManager {
         continue;
       }
 
-      console.log(`渲染页面 ${pageNum}`);
-      const page = await pdf.getPage(pageNum);
-      const viewport = page.getViewport({ scale, rotation: 0 });
-      
-      // 查找该页的占位符或创建页面容器
-      let pageContainer = pagesContainer.querySelector(`div[data-page="${pageNum}"]`) as HTMLElement;
-      const isReplacingPlaceholder = !!pageContainer;
-      
-      if (!pageContainer) {
-        pageContainer = document.createElement('div');
-        pageContainer.className = 'pdf-page-container';
-        pageContainer.setAttribute('data-page', pageNum.toString());
-      } else {
-        // 清除占位符标记
-        pageContainer.removeAttribute('data-placeholder');
-        // 保留原始类名
-        pageContainer.className = 'pdf-page-container';
-      }
-      
-      pageContainer.style.width = `${viewport.width}px`;
-      pageContainer.style.height = `${viewport.height}px`;
-      pageContainer.style.position = 'relative';
-      
-      // 创建画布
-      const canvas = document.createElement('canvas');
-      canvas.setAttribute('data-page', pageNum.toString());
-      
-      // 先清空容器内容再添加新的canvas
-      if (isReplacingPlaceholder) {
-        pageContainer.innerHTML = '';
-      }
-      
-      pageContainer.appendChild(canvas);
-      
-      const context = canvas.getContext('2d', { alpha: false });
-      if (!context) {
-        throw new Error('Failed to get canvas context');
-      }
+      // 创建一个渲染任务
+      const renderTask = (async (pageNumber) => {
+        try {
+          console.log(`准备渲染页面 ${pageNumber}`);
+          const page = await pdf.getPage(pageNumber);
+          const viewport = page.getViewport({ scale, rotation: 0 });
+          
+          // 查找该页的占位符或创建新的容器
+          let pageContainer = pagesContainer.querySelector(`div[data-page="${pageNumber}"]`) as HTMLElement;
+          const isReplacingPlaceholder = !!pageContainer;
+          
+          if (!pageContainer) {
+            pageContainer = document.createElement('div');
+            pageContainer.className = 'pdf-page-container';
+            pageContainer.setAttribute('data-page', pageNumber.toString());
+          } else {
+            // 清除占位符标记
+            pageContainer.removeAttribute('data-placeholder');
+            // 保留原始类名
+            pageContainer.className = 'pdf-page-container';
+          }
+          
+          pageContainer.style.width = `${viewport.width}px`;
+          pageContainer.style.height = `${viewport.height}px`;
+          pageContainer.style.position = 'relative';
+          
+          // 创建画布
+          const canvas = document.createElement('canvas');
+          canvas.setAttribute('data-page', pageNumber.toString());
+          
+          // 先清空容器内容再添加新的canvas
+          if (isReplacingPlaceholder) {
+            pageContainer.innerHTML = '';
+          }
+          
+          pageContainer.appendChild(canvas);
+          
+          const context = canvas.getContext('2d', { alpha: false });
+          if (!context) {
+            throw new Error('Failed to get canvas context');
+          }
 
-      // 设置 canvas 的物理像素大小
-      const outputScale = window.devicePixelRatio || 1;
-      canvas.width = Math.floor(viewport.width * outputScale);
-      canvas.height = Math.floor(viewport.height * outputScale);
-      
-      // 设置 canvas 的 CSS 大小
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
-      
-      // 设置画布缩放以匹配设备像素比
-      context.scale(outputScale, outputScale);
+          // 设置 canvas 的物理像素大小
+          const outputScale = window.devicePixelRatio || 1;
+          canvas.width = Math.floor(viewport.width * outputScale);
+          canvas.height = Math.floor(viewport.height * outputScale);
+          
+          // 设置 canvas 的 CSS 大小
+          canvas.style.width = `${viewport.width}px`;
+          canvas.style.height = `${viewport.height}px`;
+          
+          // 设置画布缩放以匹配设备像素比
+          context.scale(outputScale, outputScale);
 
-      // 渲染页面
-      await page.render({
-        canvasContext: context,
-        viewport: viewport,
-        intent: 'display',
-        renderInteractiveForms: true,
-        enableWebGL: true,
-        cMapUrl: 'https://unpkg.com/pdfjs-dist@3.11.174/cmaps/',
-        cMapPacked: true,
-      }).promise;
+          // 优化：降低初始渲染质量，加快展示速度
+          const renderQuality = isInitialLoad ? 'display' : 'display';
+          
+          // 渲染页面
+          await page.render({
+            canvasContext: context,
+            viewport: viewport,
+            intent: renderQuality,
+            renderInteractiveForms: false, // 初始不渲染交互表单，提高速度
+            enableWebGL: true,
+            cMapUrl: 'https://unpkg.com/pdfjs-dist@3.11.174/cmaps/',
+            cMapPacked: true,
+          }).promise;
 
+          // 存储渲染结果数据
+          renderedPageData.set(pageNumber, {
+            pageContainer,
+            isReplacingPlaceholder,
+            height: pageContainer.clientHeight,
+          });
+          
+          return pageNumber;
+        } catch (error) {
+          console.error(`渲染页面 ${pageNumber} 失败:`, error);
+          return null;
+        }
+      })(pageNum);
+
+      renderPromises.push(renderTask);
+    }
+
+    // 等待所有页面渲染完成
+    await Promise.all(renderPromises);
+    
+    // 将渲染结果添加到DOM
+    const processingOrder = Array.from(renderedPageData.keys()).sort((a, b) => a - b);
+    for (const pageNum of processingOrder) {
+      const data = renderedPageData.get(pageNum);
+      if (!data) continue;
+      
+      const { pageContainer, isReplacingPlaceholder, height } = data;
+      
       // 如果不是替换占位符，将页面添加到容器中
       if (!isReplacingPlaceholder) {
         let inserted = false;
@@ -225,7 +300,6 @@ export class PDFRenderManager {
         }
       }
 
-      const height = pageContainer.clientHeight;
       pageHeights.push(height);
       totalHeight += height;
       
@@ -255,7 +329,6 @@ export class PDFRenderManager {
           middlePage.scrollIntoView({ block: 'center', behavior: 'auto' });
         }
       }
-      // 注意：不触发额外的滚动操作，避免触发onScroll事件
     }
 
     console.log(`渲染完成，共渲染 ${endPage - startPage + 1} 页，总高度 ${totalHeight}px`);
@@ -263,10 +336,8 @@ export class PDFRenderManager {
   }
 
   public async renderVisiblePages(id: string, container: HTMLElement, visibleStartPage: number, visibleEndPage: number, bufferSize: number = 2, scale: number = 1): Promise<void> {
-    const pdf = this.activePDFs.get(id)
-    if (!pdf) {
-      throw new Error('PDF not loaded')
-    }
+    // 使用辅助方法确保PDF已加载
+    const pdf = await this.ensurePDFLoaded(id);
 
     const pageCount = pdf.numPages;
     const startPage = Math.max(1, visibleStartPage - bufferSize);
@@ -330,11 +401,9 @@ export class PDFRenderManager {
   }
 
   public async getPageCount(id: string): Promise<number> {
-    const pdf = this.activePDFs.get(id)
-    if (!pdf) {
-      throw new Error('PDF not loaded')
-    }
-    return pdf.numPages
+    // 使用辅助方法确保PDF已加载
+    const pdf = await this.ensurePDFLoaded(id);
+    return pdf.numPages;
   }
 
   public async getThumbnail(id: string, pageNumber: number = 1): Promise<string> {

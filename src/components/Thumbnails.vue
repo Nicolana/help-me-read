@@ -115,6 +115,13 @@ export default defineComponent({
     const errorPages = ref<number[]>([]);
     const renderPromises = ref<Map<number, Promise<void>>>(new Map());
     
+    // 防抖定时器
+    const visibilityDebounceTimer = ref<number | undefined>(undefined);
+    const initDebounceTimer = ref<number | undefined>(undefined);
+    
+    // 记录已初始化的文件ID，避免重复初始化
+    const initializedFileId = ref<string>('');
+    
     // 缩略图大小设置
     const itemHeight = 150; // 进一步减小缩略图高度，让每屏可显示更多项目
     const itemGap = 5; // 进一步减小间距
@@ -390,6 +397,27 @@ export default defineComponent({
       }
     };
 
+    // 监听 visible 变化，当显示时渲染缩略图
+    watch(visible, (newVisible) => {
+      console.log('DEBUG: visible', newVisible);
+      if (newVisible) {
+        console.log('DEBUG: 缩略图面板已显示，加载缩略图');
+        // 使用单次防抖调用，避免重复初始化
+        clearTimeout(visibilityDebounceTimer.value);
+        visibilityDebounceTimer.value = window.setTimeout(() => {
+          // 滚动到当前页面
+          updateCurrentPage(props.currentPage);
+          // 初始化缩略图
+          if (!initializedFileId.value || initializedFileId.value !== props.fileId) {
+            initThumbnails();
+            initializedFileId.value = props.fileId;
+          } else {
+            console.log('缩略图已初始化，跳过重复初始化');
+          }
+        }, 150);
+      }
+    }, { immediate: false }); // 改为false，避免组件挂载时就触发
+
     // 监听 fileId 变化，重新渲染缩略图
     watch(() => props.fileId, (newFileId, oldFileId) => {
       if (newFileId !== oldFileId) {
@@ -399,31 +427,19 @@ export default defineComponent({
         loadingPages.value = [];
         errorPages.value = [];
         renderPromises.value.clear();
+        initializedFileId.value = ''; // 重置初始化标记
         
         if (visible.value) {
           console.log('文件ID已变更，重新加载缩略图');
           // 短暂延迟，确保DOM已更新
-          setTimeout(() => {
+          clearTimeout(visibilityDebounceTimer.value);
+          visibilityDebounceTimer.value = window.setTimeout(() => {
             initThumbnails();
-          }, 50);
+            initializedFileId.value = newFileId;
+          }, 150);
         }
       }
     });
-
-    // 监听 visible 变化，当显示时渲染缩略图
-    watch(visible, (newVisible) => {
-      console.log('DEBUG: visible', newVisible);
-      if (newVisible) {
-        console.log('DEBUG: 缩略图面板已显示，加载缩略图');
-        // 确保DOM已完全更新并且正确测量尺寸
-        setTimeout(() => {
-          // 滚动到当前页面
-          updateCurrentPage(props.currentPage);
-          // 初始化缩略图
-          initThumbnails();
-        }, 100);
-      }
-    }, { immediate: true });
 
     // 监听可见范围变化，更新渲染
     watch(visibleRange, () => {
@@ -455,10 +471,12 @@ export default defineComponent({
 
     // 暴露给外部的方法
     const show = () => {
+      if (visible.value) return; // 如果已经显示，不做操作
       visible.value = true;
     };
 
     const hide = () => {
+      if (!visible.value) return; // 如果已经隐藏，不做操作
       visible.value = false;
     };
 
@@ -483,59 +501,63 @@ export default defineComponent({
       
       console.log('initThumbnails: 开始初始化缩略图');
       
-      // 确保加载前几页和当前页附近的缩略图
-      const initialPages: number[] = [];
+      // 确保延迟防抖，防止重复调用
+      clearTimeout(initDebounceTimer.value);
       
-      // 加载前15页
-      for (let i = 1; i <= Math.min(15, props.totalPages); i++) {
-        initialPages.push(i);
-      }
-      
-      // 加载当前页和周围页面
-      if (props.currentPage > 5) {
-        for (let i = Math.max(1, props.currentPage - 10); i <= Math.min(props.totalPages, props.currentPage + 10); i++) {
-          if (!initialPages.includes(i)) {
-            initialPages.push(i);
-          }
-        }
-      }
-      
-      // 如果文档很大，再加载最后几页的缩略图
-      if (props.totalPages > 30) {
-        for (let i = Math.max(props.totalPages - 5, initialPages[initialPages.length - 1] + 1); i <= props.totalPages; i++) {
+      initDebounceTimer.value = window.setTimeout(() => {
+        // 确保加载前几页和当前页附近的缩略图
+        const initialPages: number[] = [];
+        
+        // 加载前15页
+        for (let i = 1; i <= Math.min(15, props.totalPages); i++) {
           initialPages.push(i);
         }
-      }
-      
-      // 按与当前页的接近程度排序
-      initialPages.sort((a, b) => Math.abs(a - props.currentPage) - Math.abs(b - props.currentPage));
-      
-      // 开始加载
-      console.log(`初始化加载 ${initialPages.length} 页缩略图，当前页: ${props.currentPage}`);
-      
-      // 使用Promise.all和分批处理来控制并行加载
-      const batchSize = maxConcurrentRenders;
-      const processBatch = async (startIdx: number) => {
-        const batch = initialPages.slice(startIdx, startIdx + batchSize);
-        if (batch.length === 0) return;
         
-        const promises = batch.map(pageNum => {
-          if (!thumbnails.value[pageNum] && !loadingPages.value.includes(pageNum) && !renderPromises.value.has(pageNum)) {
-            return loadThumbnail(pageNum);
+        // 加载当前页和周围页面
+        if (props.currentPage > 5) {
+          for (let i = Math.max(1, props.currentPage - 10); i <= Math.min(props.totalPages, props.currentPage + 10); i++) {
+            if (!initialPages.includes(i)) {
+              initialPages.push(i);
+            }
           }
-          return Promise.resolve();
-        });
-        
-        await Promise.all(promises);
-        
-        // 处理下一批
-        if (startIdx + batchSize < initialPages.length) {
-          processBatch(startIdx + batchSize);
         }
-      };
-      
-      // 开始处理第一批
-      processBatch(0);
+        
+        console.log(`初始化加载 ${initialPages.length} 页缩略图，当前页: ${props.currentPage}`);
+        
+        // 对初始页面进行批量渲染
+        const batchSize = 5;
+        let currentBatch = 0;
+        
+        const renderNextBatch = () => {
+          const startIdx = currentBatch * batchSize;
+          const endIdx = Math.min(startIdx + batchSize, initialPages.length);
+          
+          if (startIdx >= initialPages.length) {
+            return; // 所有批次已处理完毕
+          }
+          
+          const currentBatchPages = initialPages.slice(startIdx, endIdx);
+          
+          // 并行渲染当前批次
+          Promise.all(
+            currentBatchPages.map(pageNum => loadThumbnail(pageNum))
+          )
+          .then(() => {
+            currentBatch++;
+            // 间隔100ms渲染下一批，避免过度阻塞UI
+            setTimeout(renderNextBatch, 100);
+          })
+          .catch(error => {
+            console.error('批量渲染缩略图失败:', error);
+            currentBatch++;
+            // 即使出错也继续下一批
+            setTimeout(renderNextBatch, 100);
+          });
+        };
+        
+        // 开始批量渲染
+        renderNextBatch();
+      }, 200);
     };
 
     return {
