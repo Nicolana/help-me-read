@@ -1,5 +1,5 @@
 <template>
-  <div class="thumbnails-panel" :class="{ 'thumbnails-panel-visible': visible }">
+  <div class="thumbnails-panel" :class="{ 'thumbnails-panel-hidden': !visible }">
     <div 
       class="thumbnails-container" 
       ref="thumbnailsContainer"
@@ -535,7 +535,7 @@ export default defineComponent({
 
 <style scoped>
 .thumbnails-panel {
-  width: 0;
+  width: 150px;
   background-color: #2a2a2a;
   border-right: 1px solid #3a3a3a;
   position: relative;
@@ -543,8 +543,8 @@ export default defineComponent({
   transition: width 0.3s ease;
 }
 
-.thumbnails-panel-visible {
-  width: 150px;
+.thumbnails-panel-hidden {
+  width: 0;
 }
 
 .thumbnails-container {
