@@ -77,7 +77,7 @@ export class PDFRenderManager {
     return page.getViewport({ scale, rotation: 0 })
   }
 
-  public async renderPages(id: string, startPage: number, endPage: number, container: HTMLElement, scale: number = 1, options: { isInitialLoad?: boolean, scrollPriority?: 'top' | 'center' | 'exact' } = {}): Promise<{ pageHeights: number[] }> {
+  public async renderPages(id: string, startPage: number, endPage: number, container: HTMLElement, scale: number = 1, options: { isInitialLoad?: boolean, scrollPriority?: 'top' | 'center' | 'exact' } = {}): Promise<{ pageHeights: number[], totalHeight: number }> {
     const pdf = this.activePDFs.get(id)
     if (!pdf) {
       throw new Error('PDF not loaded')
@@ -99,30 +99,26 @@ export class PDFRenderManager {
       container.appendChild(pagesContainer)
     }
 
-    // 在初始加载时，创建整个文档的占位结构
+    // 初始加载时，只准备渲染区域的结构，而不是整个文档
     if (isInitialLoad) {
-      console.log(`初始加载，创建完整文档结构占位符`);
-      // 获取第一页的尺寸作为参考
-      const firstPage = await pdf.getPage(1);
-      const viewport = firstPage.getViewport({ scale });
-      const pageCount = pdf.numPages;
-      
+      console.log(`初始加载，准备渲染区域`);
       // 清空容器
       pagesContainer.innerHTML = '';
       
-      // 创建所有页面的占位元素
-      for (let i = 1; i <= pageCount; i++) {
-        const placeholder = document.createElement('div');
-        placeholder.setAttribute('data-page', i.toString());
-        placeholder.setAttribute('data-placeholder', 'true');
-        placeholder.style.width = `${viewport.width}px`;
-        placeholder.style.height = `${viewport.height}px`;
-        placeholder.style.backgroundColor = 'transparent';
-        pagesContainer.appendChild(placeholder);
-      }
+      // 获取文档总页数
+      const pageCount = pdf.numPages;
+      
+      // 创建虚拟滚动容器
+      const virtualScroller = document.createElement('div');
+      virtualScroller.className = 'virtual-scroller';
+      pagesContainer.appendChild(virtualScroller);
+      
+      // 设置数据属性，记录文档总页数
+      pagesContainer.setAttribute('data-total-pages', pageCount.toString());
     }
 
-    const pageHeights: number[] = []
+    const pageHeights: number[] = [];
+    let totalHeight = 0;
 
     // 渲染指定范围的页面
     for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
@@ -130,7 +126,9 @@ export class PDFRenderManager {
       const existingCanvas = pagesContainer.querySelector(`canvas[data-page="${pageNum}"]`);
       if (existingCanvas) {
         console.log(`页面 ${pageNum} 已渲染，跳过`);
-        pageHeights.push(existingCanvas.clientHeight);
+        const height = existingCanvas.clientHeight;
+        pageHeights.push(height);
+        totalHeight += height;
         continue;
       }
 
@@ -138,10 +136,18 @@ export class PDFRenderManager {
       const page = await pdf.getPage(pageNum);
       const viewport = page.getViewport({ scale, rotation: 0 });
       
-      // 查找占位元素
-      const placeholder = pagesContainer.querySelector(`[data-page="${pageNum}"][data-placeholder="true"]`);
+      // 创建页面容器
+      const pageContainer = document.createElement('div');
+      pageContainer.className = 'pdf-page-container';
+      pageContainer.setAttribute('data-page', pageNum.toString());
+      pageContainer.style.width = `${viewport.width}px`;
+      pageContainer.style.height = `${viewport.height}px`;
+      pageContainer.style.position = 'relative';
+      
+      // 创建画布
       const canvas = document.createElement('canvas');
       canvas.setAttribute('data-page', pageNum.toString());
+      pageContainer.appendChild(canvas);
       
       const context = canvas.getContext('2d', { alpha: false });
       if (!context) {
@@ -162,7 +168,6 @@ export class PDFRenderManager {
 
       // 记录渲染前位置
       const scrollBefore = container.scrollTop;
-      const placeholderOffset = placeholder ? (placeholder as HTMLElement).offsetTop : 0;
       
       // 渲染页面
       await page.render({
@@ -175,25 +180,20 @@ export class PDFRenderManager {
         cMapPacked: true,
       }).promise;
 
-      // 替换占位元素
-      if (placeholder) {
-        placeholder.parentNode?.replaceChild(canvas, placeholder);
-      } else {
-        // 找到正确的位置插入
-        let inserted = false;
-        const allPages = pagesContainer.querySelectorAll('[data-page]');
-        for (let i = 0; i < allPages.length; i++) {
-          const currentPage = parseInt(allPages[i].getAttribute('data-page') || '0');
-          if (currentPage > pageNum) {
-            pagesContainer.insertBefore(canvas, allPages[i]);
-            inserted = true;
-            break;
-          }
+      // 将页面添加到容器中
+      let inserted = false;
+      const allPages = pagesContainer.querySelectorAll('[data-page]');
+      for (let i = 0; i < allPages.length; i++) {
+        const currentPage = parseInt(allPages[i].getAttribute('data-page') || '0');
+        if (currentPage > pageNum) {
+          pagesContainer.insertBefore(pageContainer, allPages[i]);
+          inserted = true;
+          break;
         }
-        
-        if (!inserted) {
-          pagesContainer.appendChild(canvas);
-        }
+      }
+      
+      if (!inserted) {
+        pagesContainer.appendChild(pageContainer);
       }
 
       // 处理滚动位置
@@ -202,17 +202,19 @@ export class PDFRenderManager {
         container.scrollTop = scrollBefore;
       } else if (isInitialLoad && pageNum === startPage && scrollPriority === 'top') {
         // 初始加载时，确保第一个渲染的页面在顶部
-        canvas.scrollIntoView({ block: 'start', behavior: 'auto' });
+        pageContainer.scrollIntoView({ block: 'start', behavior: 'auto' });
       } else if (isInitialLoad && pageNum === Math.floor((startPage + endPage) / 2) && scrollPriority === 'center') {
         // 初始加载时，确保中间页面居中
-        canvas.scrollIntoView({ block: 'center', behavior: 'auto' });
+        pageContainer.scrollIntoView({ block: 'center', behavior: 'auto' });
       }
       
-      pageHeights.push(canvas.clientHeight);
+      const height = pageContainer.clientHeight;
+      pageHeights.push(height);
+      totalHeight += height;
     }
 
     console.log(`渲染完成，共渲染 ${endPage - startPage + 1} 页`);
-    return { pageHeights };
+    return { pageHeights, totalHeight };
   }
 
   public async renderVisiblePages(id: string, container: HTMLElement, visibleStartPage: number, visibleEndPage: number, bufferSize: number = 2, scale: number = 1): Promise<void> {
@@ -227,6 +229,7 @@ export class PDFRenderManager {
     
     console.log(`渲染可视区域页面，可视区域: ${visibleStartPage}-${visibleEndPage}, 带缓冲区: ${startPage}-${endPage}`);
     
+    // 渲染可视区域及缓冲区内的页面
     await this.renderPages(id, startPage, endPage, container, scale, { scrollPriority: 'exact' });
     
     // 卸载远离可视区域的页面以节省内存

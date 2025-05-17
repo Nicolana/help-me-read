@@ -87,10 +87,19 @@ export default defineComponent({
     const saveProgressDebounceTimer = ref<number | null>(null);
     const showThumbnails = ref(true);
     const thumbnailsRef = ref<ThumbnailsExposed | null>(null);
+    // 新增：估计每页高度和总高度
+    const estimatedPageHeight = ref(0);
+    const totalDocumentHeight = ref(0);
+    // 新增：记录已知的页面高度
+    const pageHeights = ref<Map<number, number>>(new Map());
+    // 新增：记录滚动位置对应的页码
+    const scrollPositionMap = ref<Map<number, number>>(new Map());
+    // 新增：预计的缓冲区大小，滚动时渲染的额外页数
+    const bufferSize = 3;
 
     // 计算内容高度和视口高度
     const contentHeight = computed(() => {
-      return pagesContainer.value?.scrollHeight || 0;
+      return totalDocumentHeight.value || (pagesContainer.value?.scrollHeight || 0);
     });
 
     const viewportHeight = computed(() => {
@@ -150,16 +159,9 @@ export default defineComponent({
           const startPage = Math.max(1, progress.currentPage - halfVisible);
           const endPage = Math.min(startPage + visiblePages.value - 1, totalPages.value);
           
-          // 初始化整个文档结构，并渲染可视区域的页面
+          // 初始化并渲染可视区域的页面
           console.log(`初始化文档并渲染页面 ${startPage} 到 ${endPage}`);
-          await pdfService.renderPages(
-            fileId.value, 
-            startPage, 
-            endPage, 
-            pagesContainer.value!, 
-            zoom.value, 
-            { isInitialLoad: true, scrollPriority: 'center' }
-          );
+          await initializeDocument(startPage, endPage, 'center');
           
           // 设置滚动位置
           requestAnimationFrame(() => {
@@ -169,7 +171,7 @@ export default defineComponent({
         } else {
           // 没有阅读进度时从头开始
           console.log('没有找到阅读进度，从头开始渲染');
-          await initializeDocument();
+          await initializeDocument(1, Math.min(visiblePages.value, totalPages.value), 'top');
         }
         
         // 添加滚动监听器，实现虚拟滚动
@@ -187,19 +189,56 @@ export default defineComponent({
       }
     });
 
-    // 初始化文档结构，并渲染第一组页面
-    const initializeDocument = async () => {
+    // 初始化文档结构，并渲染指定范围的页面
+    const initializeDocument = async (startPage: number, endPage: number, scrollPriority: 'top' | 'center' | 'exact' = 'top') => {
       if (!pagesContainer.value) return;
-      const endPage = Math.min(visiblePages.value, totalPages.value);
-      console.log(`初始化文档并渲染首页`);
-      await pdfService.renderPages(
+      
+      console.log(`初始化文档并渲染页面 ${startPage} 到 ${endPage}`);
+      const result = await pdfService.renderPages(
         fileId.value, 
-        1, 
+        startPage, 
         endPage, 
         pagesContainer.value, 
         zoom.value, 
-        { isInitialLoad: true, scrollPriority: 'top' }
+        { isInitialLoad: true, scrollPriority }
       );
+      
+      // 记录页面高度信息
+      result.pageHeights.forEach((height, index) => {
+        const pageNum = startPage + index;
+        pageHeights.value.set(pageNum, height);
+      });
+      
+      // 计算估计的页面高度
+      if (result.pageHeights.length > 0) {
+        const avgHeight = result.pageHeights.reduce((sum, h) => sum + h, 0) / result.pageHeights.length;
+        estimatedPageHeight.value = avgHeight;
+        
+        // 估算总文档高度
+        updateTotalDocumentHeight();
+      }
+    };
+
+    // 更新总文档高度估算
+    const updateTotalDocumentHeight = () => {
+      if (estimatedPageHeight.value === 0 || totalPages.value === 0) return;
+      
+      let totalHeight = 0;
+      
+      // 使用已知页面高度和估计高度计算总高度
+      for (let i = 1; i <= totalPages.value; i++) {
+        if (pageHeights.value.has(i)) {
+          totalHeight += pageHeights.value.get(i)!;
+        } else {
+          totalHeight += estimatedPageHeight.value;
+        }
+      }
+      
+      // 添加页面间距
+      totalHeight += (totalPages.value - 1) * 4; // 4px是页面间距
+      
+      totalDocumentHeight.value = totalHeight;
+      console.log(`估算总文档高度: ${totalHeight}px, 平均页高: ${estimatedPageHeight.value}px`);
     };
 
     const handleScroll = async (e: Event) => {
@@ -208,36 +247,82 @@ export default defineComponent({
       // 更新滚动位置
       scrollTop.value = pdfContent.value.scrollTop;
       
-      // 找出当前可见的页面范围
-      const visiblePages = getVisiblePages();
-      if (visiblePages.length > 0) {
-        // 更新当前页码
-        currentPage.value = visiblePages[0];
-        
-        // 动态渲染可见区域附近的页面
-        if (!isLoading.value) {
-          isLoading.value = true;
-          try {
-            const minPage = Math.min(...visiblePages);
-            const maxPage = Math.max(...visiblePages);
-            console.log(`可见页面范围: ${minPage} - ${maxPage}`);
-            
-            // 渲染可见区域附近的页面
-            await pdfService.renderVisiblePages(
-              fileId.value,
-              pagesContainer.value!,
-              minPage,
-              maxPage,
-              2, // 缓冲区大小
-              zoom.value
-            );
-          } catch (error) {
-            console.error('动态渲染页面失败:', error);
-          } finally {
-            isLoading.value = false;
+      // 计算可见页面
+      const visiblePageRange = calculateVisiblePageRange();
+      if (visiblePageRange.length < 2) return;
+      
+      const [minVisiblePage, maxVisiblePage] = visiblePageRange;
+      
+      // 更新当前页码
+      if (minVisiblePage > 0) {
+        currentPage.value = minVisiblePage;
+      }
+      
+      // 动态渲染可见区域附近的页面
+      if (!isLoading.value && minVisiblePage > 0 && maxVisiblePage > 0) {
+        isLoading.value = true;
+        try {
+          console.log(`可见页面范围: ${minVisiblePage} - ${maxVisiblePage}`);
+          
+          // 计算需要渲染的页面范围
+          const startPage = Math.max(1, minVisiblePage - bufferSize);
+          const endPage = Math.min(totalPages.value, maxVisiblePage + bufferSize);
+          
+          // 渲染可见区域附近的页面
+          await pdfService.renderVisiblePages(
+            fileId.value,
+            pagesContainer.value!,
+            minVisiblePage,
+            maxVisiblePage,
+            bufferSize, // 缓冲区大小
+            zoom.value
+          );
+          
+          // 更新页面高度信息
+          updateVisiblePagesHeight(startPage, endPage);
+        } catch (error) {
+          console.error('动态渲染页面失败:', error);
+        } finally {
+          isLoading.value = false;
+        }
+      }
+    };
+    
+    // 更新可见页面的实际高度
+    const updateVisiblePagesHeight = (startPage: number, endPage: number) => {
+      if (!pagesContainer.value) return;
+      
+      let updated = false;
+      
+      for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
+        const pageElement = pagesContainer.value.querySelector(`[data-page="${pageNum}"]`);
+        if (pageElement && !pageElement.hasAttribute('data-placeholder')) {
+          const height = (pageElement as HTMLElement).clientHeight;
+          
+          // 只在高度变化时更新
+          if (!pageHeights.value.has(pageNum) || pageHeights.value.get(pageNum) !== height) {
+            pageHeights.value.set(pageNum, height);
+            updated = true;
           }
         }
       }
+      
+      // 如果有更新，重新计算总高度
+      if (updated) {
+        updateTotalDocumentHeight();
+      }
+    };
+
+    // 计算当前可见的页面范围
+    const calculateVisiblePageRange = (): number[] => {
+      if (!pdfContent.value || !pagesContainer.value) return [];
+      
+      const visiblePages = getVisiblePages();
+      if (visiblePages.length === 0) return [];
+      
+      const minPage = Math.min(...visiblePages);
+      const maxPage = Math.max(...visiblePages);
+      return [minPage, maxPage];
     };
 
     // 创建一个防抖版本的滚动处理函数
@@ -277,6 +362,12 @@ export default defineComponent({
         // 如果元素与容器可视区域有交叉，则认为是可见的
         if (elementBottom > containerTop && elementTop < containerBottom) {
           result.push(pageNum);
+          
+          // 记录滚动位置与页码的映射关系
+          const visibleRatio = Math.min(elementBottom, containerBottom) - Math.max(elementTop, containerTop);
+          if (visibleRatio > 0) {
+            scrollPositionMap.value.set(pageNum, element.offsetTop);
+          }
         }
       }
       
@@ -329,23 +420,31 @@ export default defineComponent({
 
     const handleZoom = async (newZoom: number) => {
       if (newZoom >= 0.5 && newZoom <= 2) {
+        // 记录当前页面作为缩放后的锚点
+        const currentVisiblePage = currentPage.value;
+        
         zoom.value = newZoom;
         if (pagesContainer.value) {
-          // 获取当前可见页面
+          // 清除页面高度缓存，因为缩放会改变高度
+          pageHeights.value.clear();
+          estimatedPageHeight.value = 0;
+          
+          // 获取当前可见页面范围
           const visiblePages = getVisiblePages();
           if (visiblePages.length > 0) {
             const minPage = Math.min(...visiblePages);
             const maxPage = Math.max(...visiblePages);
             
+            const startPage = Math.max(1, minPage - 1);
+            const endPage = Math.min(totalPages.value, maxPage + 1);
+            
             // 重新初始化文档，使用新的缩放比例
-            await pdfService.renderPages(
-              fileId.value, 
-              minPage, 
-              maxPage, 
-              pagesContainer.value, 
-              zoom.value, 
-              { isInitialLoad: true, scrollPriority: 'center' }
-            );
+            await initializeDocument(startPage, endPage, 'center');
+            
+            // 定位到原来的页面
+            setTimeout(() => {
+              goToPage(currentVisiblePage);
+            }, 50);
           }
         }
       }
@@ -419,12 +518,43 @@ export default defineComponent({
 
     // 跳转到指定页面
     const goToPage = async (pageNum: number) => {
-      if (!pdfContent.value || !pagesContainer.value) return;
+      if (!pdfContent.value || !pagesContainer.value || pageNum < 1 || pageNum > totalPages.value) return;
       
-      const pageElement = pagesContainer.value.querySelector(`[data-page="${pageNum}"]`);
+      // 先检查页面是否已渲染
+      let pageElement = pagesContainer.value.querySelector(`[data-page="${pageNum}"]`);
+      
+      // 如果页面尚未渲染，先渲染它
+      if (!pageElement || pageElement.hasAttribute('data-placeholder')) {
+        console.log(`页面 ${pageNum} 尚未渲染，开始渲染`);
+        
+        // 计算渲染范围，以请求页为中心
+        const buffer = Math.floor(visiblePages.value / 2);
+        const startPage = Math.max(1, pageNum - buffer);
+        const endPage = Math.min(totalPages.value, pageNum + buffer);
+        
+        try {
+          isLoading.value = true;
+          await pdfService.renderPages(
+            fileId.value,
+            startPage,
+            endPage,
+            pagesContainer.value,
+            zoom.value,
+            { scrollPriority: 'center' }
+          );
+          
+          // 重新获取元素引用
+          pageElement = pagesContainer.value.querySelector(`[data-page="${pageNum}"]`);
+        } catch (error) {
+          console.error(`渲染页面 ${pageNum} 失败:`, error);
+        } finally {
+          isLoading.value = false;
+        }
+      }
+      
       if (pageElement) {
         // 使用平滑滚动
-        pageElement.scrollIntoView({ behavior: 'smooth' });
+        pageElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
         currentPage.value = pageNum;
         
         // 确保缩略图面板中的当前页面可见
@@ -434,6 +564,8 @@ export default defineComponent({
             thumbnailsRef.value?.updateCurrentPage(pageNum);
           });
         }
+      } else {
+        console.error(`无法找到页面元素: ${pageNum}`);
       }
     };
 
@@ -516,9 +648,29 @@ export default defineComponent({
   gap: 20px;
 }
 
+.pdf-pages-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  gap: 4px;
+}
+
+.pdf-page-container {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: transparent;
+}
+
 .pages-container canvas {
   background-color: white;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.virtual-scroller {
+  width: 100%;
 }
 
 /* 保留其他已有样式 */
