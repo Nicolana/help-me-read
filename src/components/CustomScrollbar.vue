@@ -15,13 +15,14 @@
 
 <script lang="ts">
 import { defineComponent, ref, computed } from 'vue';
+import { PropType } from 'vue';
 
 export default defineComponent({
   name: 'CustomScrollbar',
   
   props: {
     containerRef: {
-      type: Object,
+      type: [Object, null] as PropType<HTMLElement | null>,
       required: true
     },
     contentHeight: {
