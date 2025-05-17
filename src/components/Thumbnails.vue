@@ -102,7 +102,7 @@ export default defineComponent({
   setup(props, { emit, expose }) {
     const thumbnailsContainer = ref<HTMLElement | null>(null);
     const scrollTop = ref(0);
-    const visible = ref(false);
+    const visible = ref(true);
     const pdfService = PDFService.getInstance();
     const thumbnailCache = ThumbnailCache.getInstance();
     
@@ -400,7 +400,7 @@ export default defineComponent({
           initThumbnails();
         }, 100);
       }
-    });
+    }, { immediate: true });
 
     // 监听可见范围变化，更新渲染
     watch(visibleRange, () => {

@@ -85,7 +85,7 @@ export default defineComponent({
     const isLoading = ref(false);
     const scrollTop = ref(0);
     const saveProgressDebounceTimer = ref<number | null>(null);
-    const showThumbnails = ref(false);
+    const showThumbnails = ref(true);
     const thumbnailsRef = ref<ThumbnailsExposed | null>(null);
 
     // 计算内容高度和视口高度
@@ -179,6 +179,9 @@ export default defineComponent({
         
         // 主动预加载前几页的缩略图以提高用户体验
         preloadThumbnails();
+        
+        // 默认展开缩略图
+        initThumbnails();
       } catch (error) {
         console.error('加载PDF文件失败:', error);
       }
@@ -204,8 +207,6 @@ export default defineComponent({
 
       // 更新滚动位置
       scrollTop.value = pdfContent.value.scrollTop;
-
-      const { scrollTop: currentScrollTop, scrollHeight, clientHeight } = pdfContent.value;
       
       // 找出当前可见的页面范围
       const visiblePages = getVisiblePages();
@@ -307,6 +308,24 @@ export default defineComponent({
         clearTimeout(saveProgressDebounceTimer.value);
       }
     });
+    
+    // 在组件加载完成后调用此方法，默认展开缩略图
+    const initThumbnails = () => {
+      // 设置状态为显示
+      showThumbnails.value = true;
+      // 等待thumbnailsRef可用后展开缩略图面板
+      requestAnimationFrame(() => {
+        if (thumbnailsRef.value) {
+          thumbnailsRef.value.show();
+          // 确保当前页面在缩略图中可见
+          setTimeout(() => {
+            if (thumbnailsRef.value) {
+              thumbnailsRef.value.updateCurrentPage(currentPage.value);
+            }
+          }, 100);
+        }
+      });
+    };
 
     const handleZoom = async (newZoom: number) => {
       if (newZoom >= 0.5 && newZoom <= 2) {
