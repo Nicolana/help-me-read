@@ -330,6 +330,7 @@ export default defineComponent({
     // 切换缩略图面板显示状态
     const toggleThumbnails = () => {
       showThumbnails.value = !showThumbnails.value;
+      console.log('toggleThumbnails', showThumbnails.value);
       if (showThumbnails.value && thumbnailsRef.value) {
         thumbnailsRef.value?.toggle();
       }
