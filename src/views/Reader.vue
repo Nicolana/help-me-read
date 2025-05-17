@@ -96,6 +96,12 @@ export default defineComponent({
     const scrollPositionMap = ref<Map<number, number>>(new Map());
     // 新增：预计的缓冲区大小，滚动时渲染的额外页数
     const bufferSize = 3;
+    // 新增：标记是否正在恢复进度
+    const isRestoringProgress = ref(false);
+    // 新增：标记是否初始渲染完成
+    const initialRenderComplete = ref(false);
+    // 新增：标记是否跳过下一次滚动事件处理
+    const skipNextScrollEvent = ref(false);
 
     // 计算内容高度和视口高度
     const contentHeight = computed(() => {
@@ -107,30 +113,44 @@ export default defineComponent({
     });
 
     // 监听滚动位置变化
-    watch([scrollTop, zoom, currentPage], async ([newScrollTop, newZoom, newPage]) => {
+    watch([scrollTop, zoom, currentPage], async ([newScrollTop, newZoom, newPage], oldValues) => {
+      // 如果正在恢复进度，不触发保存和UI更新
+      if (isRestoringProgress.value) {
+        return;
+      }
+      
+      // 更新滚动位置，但只在值不同时
       if (pdfContent.value && pdfContent.value.scrollTop !== newScrollTop) {
+        skipNextScrollEvent.value = true; // 标记跳过下一次滚动事件
         pdfContent.value.scrollTop = newScrollTop;
       }
       
-      // 使用防抖保存阅读进度
-      if (saveProgressDebounceTimer.value) {
-        clearTimeout(saveProgressDebounceTimer.value);
-      }
-      
-      saveProgressDebounceTimer.value = window.setTimeout(async () => {
-        if (fileId.value) {
-          try {
-            console.log('保存阅读进度:', { scrollTop: newScrollTop, zoom: newZoom, currentPage: newPage });
-            await pdfService.saveReadingProgress(fileId.value, {
-              scrollTop: newScrollTop,
-              zoom: newZoom,
-              currentPage: newPage
-            });
-          } catch (error) {
-            console.error('保存阅读进度失败:', error);
-          }
+      // 使用防抖保存阅读进度，但仅在初始渲染后
+      if (initialRenderComplete.value) {
+        if (saveProgressDebounceTimer.value) {
+          clearTimeout(saveProgressDebounceTimer.value);
         }
-      }, 500);
+        
+        saveProgressDebounceTimer.value = window.setTimeout(async () => {
+          if (fileId.value) {
+            try {
+              // 确保不保存无效的滚动位置
+              if (newScrollTop === 0 && pdfContent.value && pdfContent.value.scrollTop > 0) {
+                newScrollTop = pdfContent.value.scrollTop;
+              }
+              
+              console.log('保存阅读进度:', { scrollTop: newScrollTop, zoom: newZoom, currentPage: newPage });
+              await pdfService.saveReadingProgress(fileId.value, {
+                scrollTop: newScrollTop,
+                zoom: newZoom,
+                currentPage: newPage
+              });
+            } catch (error) {
+              console.error('保存阅读进度失败:', error);
+            }
+          }
+        }, 500);
+      }
     });
 
     onMounted(async () => {
@@ -141,6 +161,9 @@ export default defineComponent({
       }
 
       try {
+        // 标记正在恢复进度，防止触发中间状态的保存
+        isRestoringProgress.value = true;
+        
         await pdfService.openPDF(fileId.value);
         totalPages.value = await pdfService.getPageCount(fileId.value);
         
@@ -149,9 +172,9 @@ export default defineComponent({
         
         if (progress) {
           console.log('恢复阅读进度:', progress);
-          // 设置缩放比例
+          
+          // 设置缩放比例和当前页面
           zoom.value = progress.zoom;
-          // 设置当前页面
           currentPage.value = progress.currentPage;
           
           // 计算页面范围，以当前页为中心
@@ -159,19 +182,38 @@ export default defineComponent({
           const startPage = Math.max(1, progress.currentPage - halfVisible);
           const endPage = Math.min(startPage + visiblePages.value - 1, totalPages.value);
           
-          // 初始化并渲染可视区域的页面
+          // 初始化并渲染可视区域的页面，但不立即触发滚动
           console.log(`初始化文档并渲染页面 ${startPage} 到 ${endPage}`);
-          await initializeDocument(startPage, endPage, 'center');
           
-          // 设置滚动位置
-          requestAnimationFrame(() => {
+          // 关键改进：确保页面渲染完毕后再设置滚动位置
+          await initializeDocument(startPage, endPage, 'top');
+          
+          // 一定要等DOM完全更新后再设置滚动位置
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          // 设置滚动位置前先标记跳过滚动事件处理
+          skipNextScrollEvent.value = true;
+          
+          if (pdfContent.value) {
+            console.log('设置滚动位置:', progress.scrollTop);
+            pdfContent.value.scrollTop = progress.scrollTop;
             scrollTop.value = progress.scrollTop;
-            console.log('滚动位置已设置:', scrollTop.value);
-          });
+          }
+          
+          // 延迟后标记初始渲染完成
+          await new Promise(resolve => setTimeout(resolve, 300));
+          initialRenderComplete.value = true;
+          
+          // 清除恢复进度标记
+          isRestoringProgress.value = false;
         } else {
           // 没有阅读进度时从头开始
           console.log('没有找到阅读进度，从头开始渲染');
           await initializeDocument(1, Math.min(visiblePages.value, totalPages.value), 'top');
+          
+          // 标记初始渲染完成和清除恢复标记
+          initialRenderComplete.value = true;
+          isRestoringProgress.value = false;
         }
         
         // 添加滚动监听器，实现虚拟滚动
@@ -186,6 +228,8 @@ export default defineComponent({
         initThumbnails();
       } catch (error) {
         console.error('加载PDF文件失败:', error);
+        isRestoringProgress.value = false;
+        initialRenderComplete.value = true;
       }
     });
 
@@ -242,7 +286,16 @@ export default defineComponent({
     };
 
     const handleScroll = async (e: Event) => {
-      if (!pdfContent.value || isLoading.value) return;
+      // 如果标记了跳过本次滚动事件，则跳过处理并重置标记
+      if (skipNextScrollEvent.value) {
+        skipNextScrollEvent.value = false;
+        return;
+      }
+      
+      // 如果正在恢复进度或尚未完成初始渲染，不处理滚动事件
+      if (isRestoringProgress.value || !initialRenderComplete.value || !pdfContent.value || isLoading.value) {
+        return;
+      }
 
       // 更新滚动位置
       scrollTop.value = pdfContent.value.scrollTop;
@@ -253,8 +306,8 @@ export default defineComponent({
       
       const [minVisiblePage, maxVisiblePage] = visiblePageRange;
       
-      // 更新当前页码
-      if (minVisiblePage > 0) {
+      // 更新当前页码，避免不必要的更新
+      if (minVisiblePage > 0 && currentPage.value !== minVisiblePage) {
         currentPage.value = minVisiblePage;
       }
       
@@ -263,10 +316,6 @@ export default defineComponent({
         isLoading.value = true;
         try {
           console.log(`可见页面范围: ${minVisiblePage} - ${maxVisiblePage}`);
-          
-          // 计算需要渲染的页面范围
-          const startPage = Math.max(1, minVisiblePage - bufferSize);
-          const endPage = Math.min(totalPages.value, maxVisiblePage + bufferSize);
           
           // 渲染可见区域附近的页面
           await pdfService.renderVisiblePages(
@@ -279,7 +328,7 @@ export default defineComponent({
           );
           
           // 更新页面高度信息
-          updateVisiblePagesHeight(startPage, endPage);
+          updateVisiblePagesHeight(minVisiblePage - bufferSize, maxVisiblePage + bufferSize);
         } catch (error) {
           console.error('动态渲染页面失败:', error);
         } finally {
@@ -420,8 +469,12 @@ export default defineComponent({
 
     const handleZoom = async (newZoom: number) => {
       if (newZoom >= 0.5 && newZoom <= 2) {
+        // 标记正在操作中，防止触发中间状态保存
+        isRestoringProgress.value = true;
+        
         // 记录当前页面作为缩放后的锚点
         const currentVisiblePage = currentPage.value;
+        const oldZoom = zoom.value;
         
         zoom.value = newZoom;
         if (pagesContainer.value) {
@@ -439,13 +492,26 @@ export default defineComponent({
             const endPage = Math.min(totalPages.value, maxPage + 1);
             
             // 重新初始化文档，使用新的缩放比例
-            await initializeDocument(startPage, endPage, 'center');
-            
-            // 定位到原来的页面
-            setTimeout(() => {
-              goToPage(currentVisiblePage);
-            }, 50);
+            try {
+              // 比较旧的缩放值和新的缩放值方向，决定渲染策略
+              const zoomingIn = newZoom > oldZoom;
+              await initializeDocument(startPage, endPage, zoomingIn ? 'center' : 'top');
+              
+              // 定位到原来的页面
+              await new Promise(resolve => setTimeout(resolve, 50));
+              skipNextScrollEvent.value = true;
+              goToPage(currentVisiblePage, false); // false表示无需标记isRestoringProgress
+            } finally {
+              // 无论如何，确保恢复标记被重置
+              setTimeout(() => {
+                isRestoringProgress.value = false;
+              }, 500);
+            }
+          } else {
+            isRestoringProgress.value = false;
           }
+        } else {
+          isRestoringProgress.value = false;
         }
       }
     };
@@ -517,8 +583,13 @@ export default defineComponent({
     };
 
     // 跳转到指定页面
-    const goToPage = async (pageNum: number) => {
+    const goToPage = async (pageNum: number, markAsRestoring = true) => {
       if (!pdfContent.value || !pagesContainer.value || pageNum < 1 || pageNum > totalPages.value) return;
+      
+      // 允许调用者决定是否标记为恢复中
+      if (markAsRestoring) {
+        isRestoringProgress.value = true;
+      }
       
       // 先检查页面是否已渲染
       let pageElement = pagesContainer.value.querySelector(`[data-page="${pageNum}"]`);
@@ -553,6 +624,9 @@ export default defineComponent({
       }
       
       if (pageElement) {
+        // 在滚动前标记跳过下一次滚动事件处理
+        skipNextScrollEvent.value = true;
+        
         // 使用平滑滚动
         pageElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
         currentPage.value = pageNum;
@@ -564,8 +638,18 @@ export default defineComponent({
             thumbnailsRef.value?.updateCurrentPage(pageNum);
           });
         }
+        
+        // 延迟恢复保存进度功能，等待滚动动画完成
+        if (markAsRestoring) {
+          setTimeout(() => {
+            isRestoringProgress.value = false;
+          }, 600);
+        }
       } else {
         console.error(`无法找到页面元素: ${pageNum}`);
+        if (markAsRestoring) {
+          isRestoringProgress.value = false;
+        }
       }
     };
 
